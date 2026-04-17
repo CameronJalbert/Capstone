@@ -1,0 +1,36 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local runtime artifacts
+data/recordings/*
+data/logs/*
+data/events/*
+data/snapshots/*
+data/models/*
+!data/recordings/.gitkeep
+!data/logs/.gitkeep
+!data/events/.gitkeep
+!data/snapshots/.gitkeep
+!data/models/.gitkeep
+
+# Local-only configuration
+configs/app/settings.local.json
+
+# Agent handoff/context docs (local-only)
+Handoff/
+
+# Common local secret/auth material
+.env
+.env.*
+*.local.env
+*.secrets.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_ed25519

@@ -1,0 +1,46 @@
+{
+  "camera": {
+    "name": "front-door-camera",
+    "source_type": "network",
+    "stream_url": "http://YOUR_CAMERA_URL_HERE/stream",
+    "rtsp_url": "",
+    "usb_index": 0,
+    "live_frame_width": 1280,
+    "live_frame_height": 720
+  },
+  "recording": {
+    "ffmpeg_path": "ffmpeg",
+    "segment_seconds": 60,
+    "output_pattern": "data/recordings/frontdoor_%Y%m%d_%H%M%S.mp4",
+    "log_file": "data/logs/ingest.log"
+  },
+  "ingest": {
+    "capture_fps": 12,
+    "output_fps": 10,
+    "reconnect_delay_seconds": 2,
+    "stale_frame_seconds": 5
+  },
+  "storage": {
+    "sqlite_path": "data/events/events.db"
+  },
+  "detection": {
+    "model_path": "yolov8n.pt",
+    "confidence_threshold": 0.45,
+    "frame_skip": 5,
+    "target_classes": [
+      "person"
+    ],
+    "cooldown_seconds": 8,
+    "events_file": "data/events/events.ndjson",
+    "snapshot_dir": "data/snapshots"
+  },
+  "alerts": {
+    "enabled": false,
+    "webhook_url": "",
+    "timeout_seconds": 6
+  },
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8080
+  }
+}

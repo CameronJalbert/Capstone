@@ -1,0 +1,81 @@
+# Example OpenWrt /etc/config/firewall
+# Principle: default deny between zones, explicitly allow required flows.
+
+config defaults
+        option input 'REJECT'
+        option output 'ACCEPT'
+        option forward 'REJECT'
+        option synflood_protect '1'
+
+config zone
+        option name 'lan'
+        list network 'lan'
+        option input 'ACCEPT'
+        option output 'ACCEPT'
+        option forward 'REJECT'
+
+config zone
+        option name 'camera'
+        list network 'camera'
+        option input 'REJECT'
+        option output 'ACCEPT'
+        option forward 'REJECT'
+
+config zone
+        option name 'mgmt'
+        list network 'mgmt'
+        option input 'ACCEPT'
+        option output 'ACCEPT'
+        option forward 'REJECT'
+
+config zone
+        option name 'wan'
+        list network 'wan'
+        list network 'wan6'
+        option input 'REJECT'
+        option output 'ACCEPT'
+        option forward 'REJECT'
+        option masq '1'
+        option mtu_fix '1'
+
+# Allow LAN internet access
+config forwarding
+        option src 'lan'
+        option dest 'wan'
+
+# Allow CAMERA internet access for required outbound services only if needed.
+config forwarding
+        option src 'camera'
+        option dest 'wan'
+
+# Allow MGMT internet access.
+config forwarding
+        option src 'mgmt'
+        option dest 'wan'
+
+# Allow LAN -> CAMERA RTSP pull for mini PC host (adjust source IP).
+config rule
+        option name 'allow_lan_mini_pc_to_camera_rtsp'
+        option src 'lan'
+        option src_ip '192.168.10.50'
+        option dest 'camera'
+        option dest_port '554'
+        option proto 'tcp udp'
+        option target 'ACCEPT'
+
+# Optional camera web admin from MGMT only.
+config rule
+        option name 'allow_mgmt_to_camera_https'
+        option src 'mgmt'
+        option dest 'camera'
+        option dest_port '443'
+        option proto 'tcp'
+        option target 'ACCEPT'
+
+# Block CAMERA -> LAN explicit (already blocked by default forward reject).
+config rule
+        option name 'deny_camera_to_lan'
+        option src 'camera'
+        option dest 'lan'
+        option target 'REJECT'
+

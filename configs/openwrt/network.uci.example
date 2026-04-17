@@ -1,0 +1,54 @@
+# Example OpenWrt /etc/config/network
+# Adapt physical interface names and VLAN device syntax to your router model.
+
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config globals 'globals'
+        option ula_prefix 'fd00:abcd:1234::/48'
+
+# Bridge on trunk port(s). Update eth0/eth1 naming for your hardware.
+config device
+        option name 'br-lab'
+        option type 'bridge'
+        list ports 'eth0'
+
+# VLAN 10 - LAN
+config bridge-vlan
+        option device 'br-lab'
+        option vlan '10'
+        list ports 'eth0:t'
+
+# VLAN 30 - CAMERA
+config bridge-vlan
+        option device 'br-lab'
+        option vlan '30'
+        list ports 'eth0:t'
+
+# VLAN 50 - MGMT
+config bridge-vlan
+        option device 'br-lab'
+        option vlan '50'
+        list ports 'eth0:t'
+
+config interface 'lan'
+        option proto 'static'
+        option device 'br-lab.10'
+        option ipaddr '192.168.10.1'
+        option netmask '255.255.255.0'
+
+config interface 'camera'
+        option proto 'static'
+        option device 'br-lab.30'
+        option ipaddr '192.168.30.1'
+        option netmask '255.255.255.0'
+
+config interface 'mgmt'
+        option proto 'static'
+        option device 'br-lab.50'
+        option ipaddr '192.168.50.1'
+        option netmask '255.255.255.0'
+
