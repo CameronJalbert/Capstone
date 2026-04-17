@@ -96,11 +96,104 @@
 
       #live {
         width: 100%;
+        height: 100%;
         border-radius: 10px;
         border: 1px solid var(--line);
-        min-height: 260px;
         object-fit: cover;
         background: rgba(8, 16, 33, 0.8);
+        display: block;
+      }
+
+      .live-shell {
+        position: relative;
+        width: min(100%, 860px);
+        height: 360px;
+        min-width: 260px;
+        min-height: 180px;
+        max-width: 100%;
+        max-height: 72vh;
+        border-radius: 12px;
+      }
+
+      .live-shell.fullscreen {
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none;
+        max-height: none;
+        border-radius: 0;
+      }
+
+      .live-shell.mobile-fullscreen {
+        position: fixed;
+        inset: 0;
+        width: 100vw !important;
+        height: 100dvh !important;
+        max-width: none;
+        max-height: none;
+        border-radius: 0;
+        z-index: 9999;
+        background: #000;
+        padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+          max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+      }
+
+      .live-shell.mobile-fullscreen #live {
+        object-fit: contain;
+        border-radius: 10px;
+      }
+
+      body.no-scroll {
+        overflow: hidden;
+      }
+
+      .live-fullscreen-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 4;
+        transition: opacity 0.15s ease;
+      }
+
+      .live-shell:hover .live-fullscreen-btn,
+      .live-shell.show-fullscreen-btn .live-fullscreen-btn {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .resize-handle {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid rgba(229, 236, 255, 0.8);
+        background: rgba(45, 212, 191, 0.35);
+        z-index: 3;
+      }
+
+      .resize-handle.nw {
+        top: 4px;
+        left: 4px;
+        cursor: nwse-resize;
+      }
+
+      .resize-handle.ne {
+        top: 4px;
+        right: 4px;
+        cursor: nesw-resize;
+      }
+
+      .resize-handle.sw {
+        bottom: 4px;
+        left: 4px;
+        cursor: nesw-resize;
+      }
+
+      .resize-handle.se {
+        bottom: 4px;
+        right: 4px;
+        cursor: nwse-resize;
       }
 
       ul {
@@ -180,6 +273,23 @@
           grid-template-columns: 1fr;
         }
       }
+
+      @media (hover: none), (pointer: coarse) {
+        .resize-handle {
+          display: none;
+        }
+
+        .live-fullscreen-btn {
+          display: none;
+        }
+
+        .live-shell {
+          width: 100%;
+          min-width: 0;
+          height: 280px;
+          touch-action: manipulation;
+        }
+      }
     </style>
   </head>
   <body>
@@ -205,7 +315,14 @@
           <button id="live-refresh">Reconnect Stream</button>
           <span class="muted" id="live-note">Waiting for camera feed...</span>
         </div>
-        <img id="live" alt="Live camera frame" />
+        <div class="live-shell" id="live-shell">
+          <button class="live-fullscreen-btn" id="live-fullscreen-btn" type="button">Fullscreen</button>
+          <span class="resize-handle nw" data-corner="nw" aria-hidden="true"></span>
+          <span class="resize-handle ne" data-corner="ne" aria-hidden="true"></span>
+          <span class="resize-handle sw" data-corner="sw" aria-hidden="true"></span>
+          <span class="resize-handle se" data-corner="se" aria-hidden="true"></span>
+          <img id="live" alt="Live camera frame" />
+        </div>
       </section>
 
       <section class="panel hidden" id="recordings-tab">
@@ -265,6 +382,16 @@
       const liveMode = isMobileClient ? "mobile-snapshot" : "desktop-mjpeg";
       let mobileLiveLoopRunning = false;
       let mobileLiveObjectUrl = null;
+      let liveResizeState = null;
+      const touchClient = isTouchClient();
+
+      function isTouchClient() {
+        return (
+          "ontouchstart" in window ||
+          navigator.maxTouchPoints > 0 ||
+          window.matchMedia("(pointer: coarse)").matches
+        );
+      }
 
       function showTab(tabId) {
         panels.forEach((panel) => {
@@ -468,6 +595,128 @@
         refreshLiveFrame();
       }
 
+      function openFullscreenForElement(el) {
+        const activeFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+        if (activeFullscreen) {
+          document.exitFullscreen?.();
+          document.webkitExitFullscreen?.();
+          return;
+        }
+        if (el.requestFullscreen) {
+          el.requestFullscreen().catch(() => {});
+          return;
+        }
+        if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+        }
+      }
+
+      function toggleMobileFullscreen(shell) {
+        const entering = !shell.classList.contains("mobile-fullscreen");
+        shell.classList.toggle("mobile-fullscreen", entering);
+        document.body.classList.toggle("no-scroll", entering);
+      }
+
+      function wireLiveFullscreen() {
+        const shell = document.getElementById("live-shell");
+        const btn = document.getElementById("live-fullscreen-btn");
+        const img = document.getElementById("live");
+        const note = document.getElementById("live-note");
+
+        btn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (touchClient) {
+            toggleMobileFullscreen(shell);
+            return;
+          }
+          openFullscreenForElement(shell);
+        });
+
+        if (touchClient) {
+          img.addEventListener("click", () => {
+            toggleMobileFullscreen(shell);
+          });
+          note.textContent = "Tap live feed to enter or exit fullscreen.";
+        } else {
+          note.textContent = "Hover live feed for fullscreen. Drag corner handles to resize.";
+        }
+
+        function updateFullscreenUi() {
+          const activeFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+          shell.classList.toggle("fullscreen", Boolean(activeFullscreen));
+          const mobileFullscreen = shell.classList.contains("mobile-fullscreen");
+          btn.textContent = activeFullscreen || mobileFullscreen ? "Exit Fullscreen" : "Fullscreen";
+        }
+
+        document.addEventListener("fullscreenchange", updateFullscreenUi);
+        document.addEventListener("webkitfullscreenchange", updateFullscreenUi);
+      }
+
+      function applyLiveShellSize(width, height) {
+        const shell = document.getElementById("live-shell");
+        const liveTab = document.getElementById("live-tab");
+        const tabRect = liveTab.getBoundingClientRect();
+        const maxWidth = Math.max(260, Math.min(window.innerWidth - 70, tabRect.width - 10));
+        const maxHeight = Math.max(180, Math.min(window.innerHeight * 0.72, 900));
+        const clampedWidth = Math.min(maxWidth, Math.max(260, width));
+        const clampedHeight = Math.min(maxHeight, Math.max(180, height));
+        shell.style.width = `${clampedWidth}px`;
+        shell.style.height = `${clampedHeight}px`;
+      }
+
+      function wireLiveResizeHandles() {
+        if (touchClient) {
+          return;
+        }
+        const shell = document.getElementById("live-shell");
+        const handles = Array.from(document.querySelectorAll(".resize-handle"));
+
+        handles.forEach((handle) => {
+          handle.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            const corner = handle.dataset.corner || "se";
+            const rect = shell.getBoundingClientRect();
+            liveResizeState = {
+              pointerId: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY,
+              startWidth: rect.width,
+              startHeight: rect.height,
+              corner,
+            };
+            handle.setPointerCapture(event.pointerId);
+          });
+        });
+
+        document.addEventListener("pointermove", (event) => {
+          if (!liveResizeState || event.pointerId !== liveResizeState.pointerId) {
+            return;
+          }
+          const dx = event.clientX - liveResizeState.startX;
+          const dy = event.clientY - liveResizeState.startY;
+          const signX = liveResizeState.corner.includes("w") ? -1 : 1;
+          const signY = liveResizeState.corner.includes("n") ? -1 : 1;
+          applyLiveShellSize(
+            liveResizeState.startWidth + dx * signX,
+            liveResizeState.startHeight + dy * signY
+          );
+        });
+
+        function stopResizing(event) {
+          if (!liveResizeState) {
+            return;
+          }
+          if (event.pointerId !== undefined && event.pointerId !== liveResizeState.pointerId) {
+            return;
+          }
+          liveResizeState = null;
+        }
+
+        document.addEventListener("pointerup", stopResizing);
+        document.addEventListener("pointercancel", stopResizing);
+      }
+
       async function loadLatestSnapshot() {
         const result = await fetch("/api/latest-snapshot");
         const json = await result.json();
@@ -503,6 +752,8 @@
         loadSelectedLog().catch(console.error);
       });
 
+      wireLiveFullscreen();
+      wireLiveResizeHandles();
       wireLiveFrameStatus();
       refresh();
       startLiveFeed();
