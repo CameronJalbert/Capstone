@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.backend.services.ingest_service import ingest_service
 from app.backend.storage.sqlite_store import (
+    fetch_recent_events,
+    import_ndjson_events_if_sqlite_empty,
     initialize_sqlite_schema,
     resolve_sqlite_path,
     sqlite_status,
@@ -52,8 +54,8 @@ def _load_config() -> dict[str, Any]:
         return json.load(f)
 
 
-def _load_events(limit: int) -> list[dict[str, Any]]:
-    """Read latest NDJSON events for backward-compatible dashboard rendering."""
+def _load_events_from_ndjson(limit: int) -> list[dict[str, Any]]:
+    """Read latest NDJSON events as legacy fallback."""
     if not EVENTS_FILE.exists():
         return []
 
@@ -68,6 +70,13 @@ def _load_events(limit: int) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return list(reversed(events[-limit:]))
+
+
+def _load_events(limit: int) -> list[dict[str, Any]]:
+    """Load recent events primarily from SQLite, with NDJSON fallback."""
+    if SQLITE_DB_PATH is not None and SQLITE_DB_PATH.exists():
+        return fetch_recent_events(SQLITE_DB_PATH, limit=limit)
+    return _load_events_from_ndjson(limit)
 
 
 def _latest_snapshot_rel() -> str | None:
@@ -112,7 +121,13 @@ def _list_recordings(limit: int) -> list[dict[str, Any]]:
 
 def _list_logs() -> list[str]:
     """List available runtime log files."""
-    return sorted([p.name for p in LOGS_DIR.glob("*") if p.is_file()])
+    return sorted(
+        [
+            p.name
+            for p in LOGS_DIR.glob("*")
+            if p.is_file() and not p.name.startswith(".") and p.name.lower() != "backend.log"
+        ]
+    )
 
 
 def _tail_file(path: Path, lines: int) -> str:
@@ -147,6 +162,7 @@ def startup_event() -> None:
     global SQLITE_DB_PATH
     SQLITE_DB_PATH = resolve_sqlite_path(config, ROOT)
     initialize_sqlite_schema(SQLITE_DB_PATH)
+    import_ndjson_events_if_sqlite_empty(SQLITE_DB_PATH, EVENTS_FILE)
 
 
 @app.on_event("shutdown")
@@ -229,7 +245,7 @@ def storage_status() -> JSONResponse:
 
 @app.get("/api/events")
 def get_events(limit: int = Query(default=30, ge=1, le=200)) -> JSONResponse:
-    """Return recent events from legacy NDJSON storage until SQLite migration completes."""
+    """Return recent events from SQLite metadata storage."""
     return JSONResponse({"events": _load_events(limit=limit)})
 
 

@@ -26,11 +26,27 @@
   "detection": {
     "model_path": "yolov8n.pt",
     "confidence_threshold": 0.45,
-    "frame_skip": 5,
+    "frame_skip": 1,
     "target_classes": [
       "person"
     ],
     "cooldown_seconds": 8,
+    "frame_source": "backend_live_frame",
+    "backend_live_frame_url": "",
+    "frame_fetch_timeout_seconds": 3,
+    "source_retry_delay_seconds": 1,
+    "source_poll_fps": 3,
+    "inference_max_fps": 2,
+    "motion_gate_enabled": true,
+    "motion_min_changed_ratio": 0.003,
+    "motion_pixel_threshold": 22,
+    "motion_resize_width": 320,
+    "motion_blur_kernel": 5,
+    "motion_force_inference_interval_seconds": 12,
+    "status_log_interval_seconds": 60,
+    "log_file": "data/logs/detector.log",
+    "log_level": "INFO",
+    "write_legacy_ndjson": false,
     "events_file": "data/events/events.ndjson",
     "snapshot_dir": "data/snapshots"
   },

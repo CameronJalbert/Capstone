@@ -9,6 +9,20 @@ if (-not (Test-Path $configPath)) {
     $configPath = ".\configs\app\settings.example.json"
 }
 
-Write-Host "Starting YOLO detection pipeline..."
-& $venvPython ".\scripts\python\detect_events.py" --config $configPath
+$existingDetector = Get-CimInstance Win32_Process |
+    Where-Object {
+        $_.Name -match '^python(\.exe)?$' -and
+        $_.CommandLine -like '*scripts\python\detect_events.py*' -and
+        $_.ExecutablePath -like '*\.venv\Scripts\python.exe'
+    } |
+    Select-Object -First 1
 
+if ($existingDetector) {
+    Write-Host "Detector already running (PID $($existingDetector.ProcessId))."
+    Write-Host "Check Logs tab or data/logs/detector.log for runtime status."
+    return
+}
+
+Write-Host "Starting YOLO detection pipeline..."
+Write-Host "Detector log file: .\data\logs\detector.log"
+& $venvPython ".\scripts\python\detect_events.py" --config $configPath

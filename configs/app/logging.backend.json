@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "default": {
+      "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    }
+  },
+  "handlers": {
+    "default": {
+      "class": "logging.StreamHandler",
+      "formatter": "default",
+      "stream": "ext://sys.stderr"
+    },
+    "file": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "formatter": "default",
+      "filename": "data/logs/backend.log",
+      "maxBytes": 4000000,
+      "backupCount": 3,
+      "encoding": "utf-8"
+    }
+  },
+  "loggers": {
+    "uvicorn": {
+      "handlers": [
+        "default",
+        "file"
+      ],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.error": {
+      "handlers": [
+        "default",
+        "file"
+      ],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "handlers": [
+        "default",
+        "file"
+      ],
+      "level": "WARNING",
+      "propagate": false
+    },
+    "app": {
+      "handlers": [
+        "default",
+        "file"
+      ],
+      "level": "INFO",
+      "propagate": false
+    }
+  },
+  "root": {
+    "handlers": [
+      "default",
+      "file"
+    ],
+    "level": "INFO"
+  }
+}

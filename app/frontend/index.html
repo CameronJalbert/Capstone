@@ -307,6 +307,7 @@
         <button class="tab-btn" data-tab="recordings-tab">Recordings</button>
         <button class="tab-btn" data-tab="events-tab">Events</button>
         <button class="tab-btn" data-tab="logs-tab">Logs</button>
+        <button class="tab-btn" data-tab="serverlogs-tab">Server Logs</button>
         <button class="tab-btn" data-tab="system-tab">System</button>
       </nav>
 
@@ -355,6 +356,15 @@
         <pre id="log-text">No log selected yet.</pre>
       </section>
 
+      <section class="panel hidden" id="serverlogs-tab">
+        <div class="controls">
+          <label for="serverlog-lines">Lines</label>
+          <input id="serverlog-lines" type="number" min="20" max="5000" value="250" />
+          <button id="load-server-log">Load Server Log</button>
+        </div>
+        <pre id="serverlog-text">No server log loaded yet.</pre>
+      </section>
+
       <section class="panel hidden" id="system-tab">
         <div class="row">
           <article>
@@ -380,6 +390,7 @@
       const MOBILE_LIVE_TARGET_FPS = 15;
       const MOBILE_LIVE_JPEG_QUALITY = 85;
       const liveMode = isMobileClient ? "mobile-snapshot" : "desktop-mjpeg";
+      const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
       let mobileLiveLoopRunning = false;
       let mobileLiveObjectUrl = null;
       let liveResizeState = null;
@@ -404,6 +415,9 @@
         tabs.forEach((btn) => {
           btn.classList.toggle("active", btn.dataset.tab === tabId);
         });
+        if (tabId === "serverlogs-tab") {
+          loadServerLog().catch(console.error);
+        }
       }
 
       tabs.forEach((btn) => {
@@ -510,6 +524,18 @@
         document.getElementById("log-text").textContent = json.content || "(empty log)";
       }
 
+      async function loadServerLog() {
+        const lines = Number(document.getElementById("serverlog-lines").value || "250");
+        const result = await fetch(`/api/logs/${encodeURIComponent("backend.log")}?lines=${lines}`);
+        if (!result.ok) {
+          document.getElementById("serverlog-text").textContent =
+            "Failed to load backend.log. Start backend first.";
+          return;
+        }
+        const json = await result.json();
+        document.getElementById("serverlog-text").textContent = json.content || "(backend.log is empty)";
+      }
+
       function refreshLiveFrame() {
         if (liveMode !== "desktop-mjpeg") {
           return;
@@ -551,7 +577,7 @@
         const img = document.getElementById("live");
         const note = document.getElementById("live-note");
         mobileLiveLoopRunning = true;
-        note.textContent = "Mobile low-latency mode active.";
+        note.textContent = "Mobile bandwidth-save mode active.";
 
         const intervalMs = Math.max(20, Math.floor(1000 / MOBILE_LIVE_TARGET_FPS));
 
@@ -733,14 +759,19 @@
 
       async function refresh() {
         try {
-          await Promise.all([
+          const tasks = [
             loadHealth(),
             loadConfig(),
             loadEvents(),
             loadRecordings(),
             loadLogList(),
             loadLatestSnapshot(),
-          ]);
+          ];
+          const serverLogPanel = document.getElementById("serverlogs-tab");
+          if (serverLogPanel && !serverLogPanel.classList.contains("hidden")) {
+            tasks.push(loadServerLog());
+          }
+          await Promise.all(tasks);
         } catch (error) {
           document.getElementById("health").textContent = "Dashboard API unavailable";
           console.error(error);
@@ -751,13 +782,16 @@
       document.getElementById("load-log").addEventListener("click", () => {
         loadSelectedLog().catch(console.error);
       });
+      document.getElementById("load-server-log").addEventListener("click", () => {
+        loadServerLog().catch(console.error);
+      });
 
       wireLiveFullscreen();
       wireLiveResizeHandles();
       wireLiveFrameStatus();
       refresh();
       startLiveFeed();
-      setInterval(refresh, 5000);
+      setInterval(refresh, DASHBOARD_REFRESH_INTERVAL_MS);
     </script>
   </body>
 </html>

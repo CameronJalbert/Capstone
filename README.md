@@ -23,7 +23,7 @@ The repository was bootstrapped from authoritative handoff context and now conta
 
 Current known follow-up:
 
-- Live website stream is working through backend proxy, but live feed display sizing still needs UI tuning for better phone/desktop fit.
+- Detector/event pipeline migration is in progress: detector now defaults to backend ingest frames, events API now reads SQLite metadata, and recorder path remains transitional.
 
 ## What Hosts the Website
 
@@ -90,6 +90,12 @@ Local-only safety note:
 .\scripts\windows\start_backend.ps1
 ```
 
+Start backend + detector together:
+
+```powershell
+.\scripts\windows\start_backend.ps1 -WithDetector
+```
+
 Quick backend-only launcher:
 
 ```powershell
@@ -102,7 +108,14 @@ Quick backend-only launcher:
 
 Note:
 
-- Current standalone recorder/detector scripts still open camera streams directly and are considered legacy until they are refactored to consume centralized ingest output.
+- `start_detection.ps1` now uses ingest-managed backend frames by default (`/api/live-frame`).
+- detector uses motion-gated, rate-limited inference controls from `detection` config to reduce CPU load.
+- detector writes runtime logs to `data/logs/detector.log` (visible in dashboard Logs tab).
+- backend startup now writes service logs to `data/logs/backend.log` (also visible in Logs tab).
+- dashboard now has a dedicated `Server Logs` tab for `backend.log`.
+- `uvicorn.error` in startup output is logger naming from uvicorn, not automatically a backend fault.
+- detector includes a periodic fallback inference (`motion_force_inference_interval_seconds`) so it still runs occasional checks when motion gating is too strict.
+- Recording script is still transitional and may still use direct camera input.
 
 ## Documentation Index
 
