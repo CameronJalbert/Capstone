@@ -1,7 +1,7 @@
 # Remote Doorbell Camera System (Local-First Capstone)
 
-This repository is the implementation baseline for a local-first remote doorbell camera system.
-It follows the fixed project decisions:
+This repository contains the implementation baseline for a local-first remote doorbell camera system.
+The project is built around the following decisions:
 
 - Windows-based workflow and documentation
 - OpenWrt router as the network/security control point
@@ -12,18 +12,20 @@ It follows the fixed project decisions:
 
 ## Current Implementation Stage
 
-The repository was bootstrapped from authoritative handoff context and now contains:
+The current build includes:
 
-- an active continuity and architecture flow under `Handoff/`
 - starter OpenWrt config templates under `configs/openwrt/`
 - app and script configuration templates under `configs/app/`
 - a FastAPI backend + dashboard with backend-served live stream route (`/camera/live`)
 - Windows scripts for setup and service startup
 - Python scripts for RTSP ingest, YOLO-based event detection, and alerts
 
-Current known follow-up:
+Current phase summary:
 
-- Live website stream is working through backend proxy, but live feed display sizing still needs UI tuning for better phone/desktop fit.
+- Live streaming through backend is operational.
+- Detector uses backend-provided frames and persists events to SQLite.
+- Event/log visibility is available through the dashboard.
+- Recorder integration is still transitional and is the main remaining pipeline gap.
 
 ## What Hosts the Website
 
@@ -51,7 +53,6 @@ data/
   models/
   recordings/
   snapshots/
-Handoff/
 scripts/
   python/
   windows/
@@ -78,16 +79,21 @@ Copy-Item .\configs\app\settings.example.json .\configs\app\settings.local.json
 notepad .\configs\app\settings.local.json
 ```
 
-Local-only safety note:
+Local runtime safety note:
 
 - `configs/app/settings.local.json` is intentionally ignored by Git and should contain your real camera/private runtime values.
-- `Handoff/` is intentionally ignored by Git for agent continuity context and prompts.
-- If you switch checkouts/worktrees or clone elsewhere, recreate/copy these local-only files manually because ignored files are not transferred by Git.
+- If you switch checkouts/worktrees or clone elsewhere, recreate/copy local runtime files manually because ignored files are not transferred by Git.
 
 3. Start webserver first:
 
 ```powershell
 .\scripts\windows\start_backend.ps1
+```
+
+Start backend + detector together:
+
+```powershell
+.\scripts\windows\start_backend.ps1 -WithDetector
 ```
 
 Quick backend-only launcher:
@@ -102,23 +108,25 @@ Quick backend-only launcher:
 
 Note:
 
-- Current standalone recorder/detector scripts still open camera streams directly and are considered legacy until they are refactored to consume centralized ingest output.
+- `start_detection.ps1` now uses ingest-managed backend frames by default (`/api/live-frame`).
+- detector uses motion-gated, rate-limited inference controls from `detection` config to reduce CPU load.
+- detector writes runtime logs to `data/logs/detector.log` (visible in dashboard Logs tab).
+- backend startup writes service logs to `data/logs/backend.log` (visible in dashboard Server Logs tab).
+- `uvicorn.error` in startup output is logger naming from uvicorn, not automatically a backend fault.
+- detector includes a periodic fallback inference (`motion_force_inference_interval_seconds`) so it still runs occasional checks when motion gating is too strict.
+- Recording script is still transitional and may still use direct camera input.
 
-## Documentation Index
+## Current Work In Progress
 
-These continuity docs are local-only and intentionally excluded from Git via `.gitignore`:
+- Recorder path migration to fully ingest-managed flow
+- Additional event lifecycle features (review/share/delete states)
+- Mobile stream stability tuning under varying network conditions
+- Dashboard expansion for operational visibility (events/logging/system status)
 
-- [State Reconstruction](Handoff/STATE_RECONSTRUCTION.md)
-- [Perma Agent Rules](Handoff/Permainfo/PERMA_AGENT_RULES.md)
-- [Current Architecture Assessment](Handoff/CURRENT_ARCHITECTURE_ASSESSMENT.md)
-- [Roadmap for Agents](Handoff/ROADMAP_NEXT_AGENTS.md)
-- [Service Startup Runbook](Handoff/Setup/SERVICE_STARTUP_RUNBOOK.md)
-- [Host Profile](Handoff/Permainfo/HOST_PROFILE.md)
+## Project Direction
 
-Historical context and prior draft docs remain available under:
-
-- `Handoff/old/`
-
-Continuity note:
-
-- If runtime camera details are missing or stale in current context files, confirm them with the user before implementing assumptions.
+The focus of this capstone is a reliable, reproducible local security-camera stack:
+- local-first ingestion and processing
+- practical remote access through Tailscale
+- maintainable service startup and troubleshooting workflow
+- progressive feature completion toward a full production-style capstone demo
