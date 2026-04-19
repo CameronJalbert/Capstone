@@ -71,6 +71,12 @@
         box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.4) inset;
       }
 
+      .tab-btn.alert {
+        border-color: rgba(248, 113, 113, 0.9);
+        color: #fca5a5;
+        box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.45) inset;
+      }
+
       .panel {
         margin-top: 16px;
         border: 1px solid var(--line);
@@ -97,30 +103,45 @@
       #live {
         width: 100%;
         height: 100%;
-        border-radius: 10px;
-        border: 1px solid var(--line);
+        border-radius: inherit;
+        border: 0;
         object-fit: cover;
-        background: rgba(8, 16, 33, 0.8);
+        background: #000;
         display: block;
+      }
+
+      .live-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      .live-left {
+        min-width: 0;
       }
 
       .live-shell {
         position: relative;
-        width: min(100%, 860px);
-        height: 360px;
-        min-width: 260px;
-        min-height: 180px;
+        width: 100%;
+        aspect-ratio: 3 / 2;
+        min-height: 220px;
         max-width: 100%;
-        max-height: 72vh;
+        max-height: 70vh;
         border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+        border: 1px solid var(--line);
       }
 
       .live-shell.fullscreen {
         width: 100vw !important;
         height: 100vh !important;
+        aspect-ratio: auto;
         max-width: none;
         max-height: none;
         border-radius: 0;
+        border: 0;
       }
 
       .live-shell.mobile-fullscreen {
@@ -130,6 +151,7 @@
         height: 100dvh !important;
         max-width: none;
         max-height: none;
+        aspect-ratio: auto;
         border-radius: 0;
         z-index: 9999;
         background: #000;
@@ -150,50 +172,61 @@
         position: absolute;
         top: 10px;
         right: 10px;
-        opacity: 0;
-        pointer-events: none;
+        opacity: 0.92;
+        pointer-events: auto;
         z-index: 4;
         transition: opacity 0.15s ease;
       }
 
-      .live-shell:hover .live-fullscreen-btn,
-      .live-shell.show-fullscreen-btn .live-fullscreen-btn {
+      .live-fullscreen-btn:hover {
         opacity: 1;
-        pointer-events: auto;
       }
 
-      .resize-handle {
-        position: absolute;
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        border: 1px solid rgba(229, 236, 255, 0.8);
-        background: rgba(45, 212, 191, 0.35);
-        z-index: 3;
+      .live-telemetry {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(8, 16, 33, 0.55);
+        padding: 12px;
       }
 
-      .resize-handle.nw {
-        top: 4px;
-        left: 4px;
-        cursor: nwse-resize;
+      .live-telemetry h3 {
+        margin: 0 0 10px;
+        font-size: 1rem;
       }
 
-      .resize-handle.ne {
-        top: 4px;
-        right: 4px;
-        cursor: nesw-resize;
+      .telemetry-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
       }
 
-      .resize-handle.sw {
-        bottom: 4px;
-        left: 4px;
-        cursor: nesw-resize;
+      .telemetry-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px;
+        background: rgba(15, 27, 54, 0.68);
       }
 
-      .resize-handle.se {
-        bottom: 4px;
-        right: 4px;
-        cursor: nwse-resize;
+      .telemetry-label {
+        font-size: 0.72rem;
+        color: var(--muted);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .telemetry-value {
+        margin-top: 4px;
+        font-size: 1rem;
+        font-weight: 600;
+        word-break: break-word;
+      }
+
+      .telemetry-value.ok {
+        color: var(--accent);
+      }
+
+      .telemetry-value.warn {
+        color: #f59e0b;
       }
 
       ul {
@@ -234,6 +267,383 @@
         min-height: 240px;
       }
 
+      .media-focus {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(8, 16, 33, 0.5);
+        padding: 12px;
+      }
+
+      .media-player-shell {
+        position: relative;
+        min-height: 260px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+      }
+
+      .media-player {
+        width: 100%;
+        height: 100%;
+        min-height: 260px;
+        object-fit: contain;
+        display: block;
+        background: #000;
+      }
+
+      .media-player-empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        text-align: center;
+        color: var(--muted);
+        background: linear-gradient(160deg, rgba(19, 31, 63, 0.4), rgba(8, 16, 33, 0.9));
+      }
+
+      .media-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 10px;
+      }
+
+      .media-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(19, 31, 63, 0.45);
+        color: var(--text);
+        cursor: pointer;
+        padding: 0;
+        overflow: hidden;
+        text-align: left;
+        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .media-card:hover {
+        border-color: var(--accent2);
+        transform: translateY(-2px);
+      }
+
+      .media-card.selected {
+        border-color: var(--accent2);
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.42) inset;
+      }
+
+      .media-card-thumb {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        border-bottom: 1px solid var(--line);
+        background: #050b18;
+        overflow: hidden;
+      }
+
+      .media-card-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .media-card-thumb-fallback {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-weight: 600;
+        background: linear-gradient(160deg, rgba(19, 31, 63, 0.88), rgba(8, 16, 33, 0.95));
+      }
+
+      .media-kind-badge {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        background: rgba(8, 16, 33, 0.88);
+        border: 1px solid rgba(96, 165, 250, 0.55);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 0.72rem;
+        color: #cfe1ff;
+      }
+
+      .media-card-body {
+        padding: 8px;
+      }
+
+      .media-card-title {
+        font-size: 0.88rem;
+        font-weight: 600;
+        line-height: 1.25;
+      }
+
+      .media-card-sub {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .events-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 10px;
+      }
+
+      .event-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        padding: 0;
+        text-align: left;
+        color: var(--text);
+        background: rgba(19, 31, 63, 0.5);
+        cursor: pointer;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+      }
+
+      .event-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--accent2);
+      }
+
+      .event-thumb {
+        aspect-ratio: 4 / 3;
+        border-bottom: 1px solid var(--line);
+        background: #050b18;
+      }
+
+      .event-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .event-thumb-fallback {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .event-card-body {
+        padding: 8px;
+      }
+
+      .event-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      .event-sub {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .event-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        background: rgba(3, 8, 18, 0.65);
+        backdrop-filter: blur(3px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.24s ease;
+      }
+
+      .event-modal.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .event-modal-stage {
+        width: min(94vw, 980px);
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+      }
+
+      .event-modal-media {
+        flex: 1 1 62%;
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: #000;
+        transform: translateY(20px) scale(0.965);
+        opacity: 0;
+        transition: transform 0.32s ease, opacity 0.32s ease;
+        z-index: 2;
+      }
+
+      .event-modal.open .event-modal-media {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+
+      .event-modal-media img {
+        width: 100%;
+        height: 100%;
+        min-height: 320px;
+        object-fit: contain;
+        background: #000;
+        display: block;
+      }
+
+      .event-modal-info {
+        flex: 1 1 38%;
+        margin-left: -18px;
+        padding: 18px 16px 16px 34px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(15, 27, 54, 0.96);
+        transform: translateX(-48px);
+        opacity: 0;
+        transition: transform 0.3s ease 0.08s, opacity 0.3s ease 0.08s;
+      }
+
+      .event-modal.open .event-modal-info {
+        transform: translateX(0);
+        opacity: 1;
+      }
+
+      .event-modal h3 {
+        margin: 0 0 10px;
+      }
+
+      .event-modal-meta {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 7px;
+      }
+
+      .event-modal-row {
+        font-size: 0.86rem;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .event-modal-row span:first-child {
+        color: var(--muted);
+      }
+
+      .event-modal-row span:last-child {
+        text-align: right;
+        word-break: break-word;
+      }
+
+      .event-modal-actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .log-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+
+      .log-nav-btn {
+        min-width: 40px;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .log-nav-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .log-source {
+        min-width: 220px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 7px 10px;
+        background: rgba(8, 16, 33, 0.55);
+      }
+
+      .log-source-name {
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+
+      .log-source-name.error {
+        color: #fca5a5;
+      }
+
+      .log-source-sub {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .log-viewer {
+        position: relative;
+        min-height: 420px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(8, 16, 33, 0.72);
+        overflow: hidden;
+      }
+
+      .log-pane {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+        max-height: none;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(0);
+      }
+
+      .log-pane.active {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .log-pane.anim-enter-from-right {
+        opacity: 0;
+        transform: translateX(34px);
+      }
+
+      .log-pane.anim-enter-from-left {
+        opacity: 0;
+        transform: translateX(-34px);
+      }
+
+      .log-pane.anim-enter-active {
+        opacity: 1;
+        transform: translateX(0);
+        transition: transform 0.25s ease, opacity 0.25s ease;
+      }
+
+      .log-pane.anim-exit-to-left {
+        opacity: 0;
+        transform: translateX(-34px);
+        transition: transform 0.25s ease, opacity 0.25s ease;
+      }
+
+      .log-pane.anim-exit-to-right {
+        opacity: 0;
+        transform: translateX(34px);
+        transition: transform 0.25s ease, opacity 0.25s ease;
+      }
+
       pre {
         margin: 0;
         padding: 12px;
@@ -272,13 +682,29 @@
         .row {
           grid-template-columns: 1fr;
         }
+
+        .live-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .event-modal-stage {
+          width: min(96vw, 640px);
+          flex-direction: column;
+        }
+
+        .event-modal-info {
+          margin-left: 0;
+          margin-top: -14px;
+          padding: 28px 14px 14px;
+          transform: translateY(-26px);
+        }
+
+        .event-modal.open .event-modal-info {
+          transform: translateY(0);
+        }
       }
 
       @media (hover: none), (pointer: coarse) {
-        .resize-handle {
-          display: none;
-        }
-
         .live-fullscreen-btn {
           display: none;
         }
@@ -299,7 +725,6 @@
           <h1>Doorbell Camera Control Panel</h1>
           <div class="sub">Webserver-first workflow: live feed, recordings, events, and logs.</div>
         </div>
-        <div class="status-chip" id="health">Checking health...</div>
       </header>
 
       <nav class="nav">
@@ -307,7 +732,6 @@
         <button class="tab-btn" data-tab="recordings-tab">Recordings</button>
         <button class="tab-btn" data-tab="events-tab">Events</button>
         <button class="tab-btn" data-tab="logs-tab">Logs</button>
-        <button class="tab-btn" data-tab="serverlogs-tab">Server Logs</button>
         <button class="tab-btn" data-tab="system-tab">System</button>
       </nav>
 
@@ -316,53 +740,71 @@
           <button id="live-refresh">Reconnect Stream</button>
           <span class="muted" id="live-note">Waiting for camera feed...</span>
         </div>
-        <div class="live-shell" id="live-shell">
-          <button class="live-fullscreen-btn" id="live-fullscreen-btn" type="button">Fullscreen</button>
-          <span class="resize-handle nw" data-corner="nw" aria-hidden="true"></span>
-          <span class="resize-handle ne" data-corner="ne" aria-hidden="true"></span>
-          <span class="resize-handle sw" data-corner="sw" aria-hidden="true"></span>
-          <span class="resize-handle se" data-corner="se" aria-hidden="true"></span>
-          <img id="live" alt="Live camera frame" />
+        <div class="live-layout">
+          <div class="live-left">
+            <div class="live-shell" id="live-shell">
+              <button class="live-fullscreen-btn" id="live-fullscreen-btn" type="button">Fullscreen</button>
+              <img id="live" alt="Live camera frame" />
+            </div>
+          </div>
+          <aside class="live-telemetry">
+            <h3>Server Telemetry</h3>
+            <div class="telemetry-grid">
+              <div class="telemetry-item"><div class="telemetry-label">Backend</div><div class="telemetry-value" id="telemetry-backend">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Camera</div><div class="telemetry-value" id="telemetry-camera">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Uptime</div><div class="telemetry-value" id="telemetry-uptime">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Ingest Running</div><div class="telemetry-value" id="telemetry-ingest-running">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Capture Open</div><div class="telemetry-value" id="telemetry-capture-open">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Frame Count</div><div class="telemetry-value" id="telemetry-frame-count">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Frame Age (s)</div><div class="telemetry-value" id="telemetry-frame-age">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Consecutive Failures</div><div class="telemetry-value" id="telemetry-failures">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Stale</div><div class="telemetry-value" id="telemetry-stale">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Event Records</div><div class="telemetry-value" id="telemetry-events">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Recordings</div><div class="telemetry-value" id="telemetry-recordings">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Snapshots</div><div class="telemetry-value" id="telemetry-snapshots">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Jobs (Q/R)</div><div class="telemetry-value" id="telemetry-jobs">--</div></div>
+            </div>
+          </aside>
         </div>
       </section>
 
       <section class="panel hidden" id="recordings-tab">
-        <div class="row">
-          <article>
-            <h3>Recording Files</h3>
-            <ul id="recordings"></ul>
-          </article>
-          <article>
-            <h3>Playback</h3>
-            <video class="video" id="player" controls></video>
-            <p class="muted" id="player-note">Select a recording to play.</p>
-          </article>
-        </div>
+        <article class="media-focus">
+          <h3>Media Viewer</h3>
+          <div class="media-player-shell">
+            <video class="video media-player hidden" id="player" controls></video>
+            <img class="media-player hidden" id="image-player" alt="Selected media preview" />
+            <div class="media-player-empty" id="media-empty">Select an image or video below to preview it here.</div>
+          </div>
+          <p class="muted" id="player-note">Select a media item to preview.</p>
+        </article>
+        <article style="margin-top: 14px;">
+          <h3>Media Library</h3>
+          <div class="media-grid" id="recordings"></div>
+        </article>
       </section>
 
       <section class="panel hidden" id="events-tab">
         <h3>Recent Detection Events</h3>
-        <ul id="events"></ul>
+        <div class="events-grid" id="events"></div>
       </section>
 
       <section class="panel hidden" id="logs-tab">
-        <div class="controls">
-          <label for="log-select">Log file</label>
-          <select id="log-select"></select>
+        <div class="log-toolbar">
+          <button class="log-nav-btn" id="log-prev" type="button" aria-label="Previous log">&#8592;</button>
+          <div class="log-source">
+            <div class="log-source-name" id="log-source-name">Loading logs...</div>
+            <div class="log-source-sub" id="log-source-sub">0 / 0</div>
+          </div>
+          <button class="log-nav-btn" id="log-next" type="button" aria-label="Next log">&#8594;</button>
           <label for="log-lines">Lines</label>
           <input id="log-lines" type="number" min="20" max="2000" value="250" />
-          <button id="load-log">Load</button>
+          <button id="log-refresh" type="button">Refresh</button>
         </div>
-        <pre id="log-text">No log selected yet.</pre>
-      </section>
-
-      <section class="panel hidden" id="serverlogs-tab">
-        <div class="controls">
-          <label for="serverlog-lines">Lines</label>
-          <input id="serverlog-lines" type="number" min="20" max="5000" value="250" />
-          <button id="load-server-log">Load Server Log</button>
+        <div class="log-viewer">
+          <pre class="log-pane active" id="log-text-a">No log selected yet.</pre>
+          <pre class="log-pane" id="log-text-b"></pre>
         </div>
-        <pre id="serverlog-text">No server log loaded yet.</pre>
       </section>
 
       <section class="panel hidden" id="system-tab">
@@ -380,6 +822,22 @@
       </section>
     </main>
 
+    <div class="event-modal hidden" id="event-modal" aria-hidden="true">
+      <div class="event-modal-stage" role="dialog" aria-modal="true" aria-labelledby="event-modal-title">
+        <article class="event-modal-media">
+          <img id="event-modal-image" alt="Selected event snapshot" />
+        </article>
+        <aside class="event-modal-info">
+          <h3 id="event-modal-title">Event Details</h3>
+          <div class="event-modal-meta" id="event-modal-meta"></div>
+          <div class="event-modal-actions">
+            <button id="event-modal-watch" type="button">Watch Event Video</button>
+            <button id="event-modal-close" type="button">Close</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
     <script>
       const tabs = Array.from(document.querySelectorAll(".tab-btn"));
       const panels = Array.from(document.querySelectorAll(".panel"));
@@ -391,10 +849,21 @@
       const MOBILE_LIVE_JPEG_QUALITY = 85;
       const liveMode = isMobileClient ? "mobile-snapshot" : "desktop-mjpeg";
       const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+      const LOG_ERROR_PATTERN = /\b(error|exception|traceback|fatal|failed|critical)\b/i;
       let mobileLiveLoopRunning = false;
       let mobileLiveObjectUrl = null;
-      let liveResizeState = null;
       const touchClient = isTouchClient();
+      const logsTabBtn = document.querySelector('.tab-btn[data-tab="logs-tab"]');
+      let latestEvents = [];
+      let latestRecordings = [];
+      let mediaItems = [];
+      let selectedMediaKey = "";
+      let logFiles = [];
+      let currentLogIndex = 0;
+      let logErrorsByFile = new Map();
+      let activeLogPane = "a";
+      let logPaneAnimating = false;
+      let logRequestToken = 0;
 
       function isTouchClient() {
         return (
@@ -415,8 +884,8 @@
         tabs.forEach((btn) => {
           btn.classList.toggle("active", btn.dataset.tab === tabId);
         });
-        if (tabId === "serverlogs-tab") {
-          loadServerLog().catch(console.error);
+        if (tabId === "logs-tab") {
+          refreshLogsPanel({ preserveCurrent: true, animate: false }).catch(console.error);
         }
       }
 
@@ -424,10 +893,88 @@
         btn.addEventListener("click", () => showTab(btn.dataset.tab));
       });
 
+      function setTelemetryValue(id, value, tone = "") {
+        const node = document.getElementById(id);
+        if (!node) {
+          return;
+        }
+        node.textContent = value;
+        node.classList.remove("ok", "warn");
+        if (tone) {
+          node.classList.add(tone);
+        }
+      }
+
+      function formatUptime(totalSeconds) {
+        const n = Number(totalSeconds);
+        if (!Number.isFinite(n) || n < 0) {
+          return "--";
+        }
+        const whole = Math.floor(n);
+        const days = Math.floor(whole / 86400);
+        const hours = Math.floor((whole % 86400) / 3600);
+        const mins = Math.floor((whole % 3600) / 60);
+        const secs = whole % 60;
+        if (days > 0) {
+          return `${days}d ${hours}h ${mins}m ${secs}s`;
+        }
+        if (hours > 0) {
+          return `${hours}h ${mins}m ${secs}s`;
+        }
+        if (mins > 0) {
+          return `${mins}m ${secs}s`;
+        }
+        return `${secs}s`;
+      }
+
+      function updateLiveTelemetry(health) {
+        const ingest = health.ingest || {};
+        const storage = health.storage || {};
+        const jobs = health.jobs || {};
+        setTelemetryValue(
+          "telemetry-backend",
+          health.status === "ok" ? "Healthy" : "Degraded",
+          health.status === "ok" ? "ok" : "warn"
+        );
+        setTelemetryValue("telemetry-camera", health.camera_name || "unknown");
+        setTelemetryValue("telemetry-uptime", formatUptime(health.uptime_seconds ?? null));
+        setTelemetryValue(
+          "telemetry-ingest-running",
+          ingest.running ? "Yes" : "No",
+          ingest.running ? "ok" : "warn"
+        );
+        setTelemetryValue(
+          "telemetry-capture-open",
+          ingest.capture_open ? "Yes" : "No",
+          ingest.capture_open ? "ok" : "warn"
+        );
+        setTelemetryValue("telemetry-frame-count", String(ingest.frame_count ?? 0));
+        setTelemetryValue(
+          "telemetry-frame-age",
+          Number.isFinite(Number(ingest.last_frame_age_seconds))
+            ? Number(ingest.last_frame_age_seconds).toFixed(3)
+            : "--"
+        );
+        setTelemetryValue(
+          "telemetry-failures",
+          String(ingest.consecutive_failures ?? 0),
+          Number(ingest.consecutive_failures || 0) > 0 ? "warn" : "ok"
+        );
+        setTelemetryValue(
+          "telemetry-stale",
+          ingest.stale ? "Yes" : "No",
+          ingest.stale ? "warn" : "ok"
+        );
+        setTelemetryValue("telemetry-events", String(storage.event_records ?? 0));
+        setTelemetryValue("telemetry-recordings", String(health.recording_count ?? 0));
+        setTelemetryValue("telemetry-snapshots", String(health.snapshot_count ?? 0));
+        setTelemetryValue("telemetry-jobs", `${jobs.queued ?? 0}/${jobs.running ?? 0}`);
+      }
+
       async function loadHealth() {
         const result = await fetch("/api/health");
         const json = await result.json();
-        document.getElementById("health").textContent = `${json.status === "ok" ? "Healthy" : "Degraded"} | recordings: ${json.recording_count} | snapshots: ${json.snapshot_count}`;
+        updateLiveTelemetry(json);
       }
 
       async function loadConfig() {
@@ -436,104 +983,601 @@
         document.getElementById("config").textContent = JSON.stringify(json, null, 2);
       }
 
+      function updateNoScrollState() {
+        const shell = document.getElementById("live-shell");
+        const modal = document.getElementById("event-modal");
+        const mobileFullscreen = shell?.classList.contains("mobile-fullscreen");
+        const modalOpen = modal?.classList.contains("open");
+        document.body.classList.toggle("no-scroll", Boolean(mobileFullscreen || modalOpen));
+      }
+
+      function safeNum(value, decimals = 2) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          return "--";
+        }
+        return n.toFixed(decimals);
+      }
+
+      function toLocalTime(tsUtc) {
+        if (!tsUtc) {
+          return "--";
+        }
+        const parsed = new Date(tsUtc);
+        if (Number.isNaN(parsed.getTime())) {
+          return String(tsUtc);
+        }
+        return parsed.toLocaleString();
+      }
+
+      function resolveMediaUrl(ref) {
+        const raw = String(ref || "").trim();
+        if (!raw) {
+          return "";
+        }
+        if (raw.startsWith("http://") || raw.startsWith("https://")) {
+          return raw;
+        }
+        if (raw.startsWith("/")) {
+          return raw;
+        }
+        const normalized = raw.replace(/\\/g, "/");
+        const fileName = normalized.split("/").pop();
+        if (normalized.startsWith("data/snapshots/")) {
+          return `/snapshots/${fileName}`;
+        }
+        if (normalized.startsWith("data/recordings/")) {
+          return `/recordings/${fileName}`;
+        }
+        if (normalized.startsWith("snapshots/") || normalized.startsWith("recordings/")) {
+          return `/${normalized}`;
+        }
+        return `/${normalized}`;
+      }
+
+      function createModalMetaRow(label, value) {
+        const row = document.createElement("div");
+        row.className = "event-modal-row";
+        const left = document.createElement("span");
+        left.textContent = label;
+        const right = document.createElement("span");
+        right.textContent = value;
+        row.appendChild(left);
+        row.appendChild(right);
+        return row;
+      }
+
+      function closeEventModal() {
+        const modal = document.getElementById("event-modal");
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        setTimeout(() => {
+          if (!modal.classList.contains("open")) {
+            modal.classList.add("hidden");
+          }
+          updateNoScrollState();
+        }, 220);
+      }
+
+      function findMediaItemByEventClip(event) {
+        const clipUrl = resolveMediaUrl(event.clip);
+        if (!clipUrl) {
+          return null;
+        }
+        return (
+          mediaItems.find((item) => item.kind === "video" && item.sourceEventId === event.id) ||
+          mediaItems.find((item) => item.kind === "video" && item.url === clipUrl) ||
+          null
+        );
+      }
+
+      function openEventModal(event) {
+        const modal = document.getElementById("event-modal");
+        const image = document.getElementById("event-modal-image");
+        const meta = document.getElementById("event-modal-meta");
+        const watchBtn = document.getElementById("event-modal-watch");
+        const snapshotUrl = resolveMediaUrl(event.snapshot);
+        const hasClip = Boolean(resolveMediaUrl(event.clip));
+
+        if (snapshotUrl) {
+          image.src = `${snapshotUrl}?t=${Date.now()}`;
+        } else {
+          image.removeAttribute("src");
+        }
+        image.alt = `Event ${event.id} snapshot`;
+
+        meta.innerHTML = "";
+        meta.appendChild(createModalMetaRow("Event ID", String(event.id ?? "--")));
+        meta.appendChild(createModalMetaRow("When", toLocalTime(event.ts_utc)));
+        meta.appendChild(createModalMetaRow("Label", String(event.label ?? "--")));
+        meta.appendChild(createModalMetaRow("Confidence", safeNum(event.confidence)));
+        meta.appendChild(createModalMetaRow("Severity", String(event.severity_level ?? "--")));
+        meta.appendChild(createModalMetaRow("Lifecycle", String(event.lifecycle_state ?? "--")));
+        meta.appendChild(
+          createModalMetaRow(
+            "Delete After",
+            event.delete_after_ts_utc ? toLocalTime(event.delete_after_ts_utc) : "--"
+          )
+        );
+
+        watchBtn.disabled = !hasClip;
+        watchBtn.textContent = hasClip ? "Watch Event Video" : "No Event Video";
+        watchBtn.onclick = () => {
+          if (!hasClip) {
+            return;
+          }
+          closeEventModal();
+          showTab("recordings-tab");
+          const item = findMediaItemByEventClip(event);
+          if (item) {
+            selectMediaItem(item, { autoplay: true });
+          }
+        };
+
+        modal.classList.remove("hidden");
+        modal.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(() => {
+          modal.classList.add("open");
+          updateNoScrollState();
+        });
+      }
+
+      function updateSelectedMediaCard() {
+        const cards = document.querySelectorAll(".media-card");
+        cards.forEach((card) => {
+          card.classList.toggle("selected", card.dataset.mediaKey === selectedMediaKey);
+        });
+      }
+
+      function selectMediaItem(item, options = {}) {
+        const player = document.getElementById("player");
+        const imagePlayer = document.getElementById("image-player");
+        const empty = document.getElementById("media-empty");
+        const note = document.getElementById("player-note");
+        const autoplay = Boolean(options.autoplay);
+
+        selectedMediaKey = item.key;
+        updateSelectedMediaCard();
+
+        if (item.kind === "image") {
+          player.pause();
+          player.removeAttribute("src");
+          player.load();
+          player.classList.add("hidden");
+          imagePlayer.classList.remove("hidden");
+          imagePlayer.src = `${item.url}?t=${Date.now()}`;
+          empty.classList.add("hidden");
+          note.textContent = `Viewing image: ${item.title}`;
+          return;
+        }
+
+        imagePlayer.classList.add("hidden");
+        imagePlayer.removeAttribute("src");
+        player.classList.remove("hidden");
+        empty.classList.add("hidden");
+        if (player.src !== new URL(item.url, window.location.origin).href) {
+          player.src = item.url;
+        }
+        note.textContent = `Playing video: ${item.title}`;
+        if (autoplay) {
+          player.play().catch(() => {});
+        }
+      }
+
+      function buildMediaItems() {
+        const items = [];
+        const seenVideoUrls = new Set();
+
+        for (const event of latestEvents) {
+          const snapshotUrl = resolveMediaUrl(event.snapshot);
+          const clipUrl = resolveMediaUrl(event.clip);
+          const eventTime = toLocalTime(event.ts_utc);
+          const confidence = safeNum(event.confidence);
+
+          if (snapshotUrl) {
+            items.push({
+              key: `event-${event.id}-snapshot`,
+              kind: "image",
+              url: snapshotUrl,
+              thumbnailUrl: snapshotUrl,
+              title: `Event Snapshot #${event.id}`,
+              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
+              sourceEventId: event.id,
+            });
+          }
+
+          if (clipUrl && !seenVideoUrls.has(clipUrl)) {
+            seenVideoUrls.add(clipUrl);
+            items.push({
+              key: `event-${event.id}-clip`,
+              kind: "video",
+              url: clipUrl,
+              thumbnailUrl: snapshotUrl,
+              title: `Event Clip #${event.id}`,
+              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
+              sourceEventId: event.id,
+            });
+          }
+        }
+
+        for (const recording of latestRecordings) {
+          const videoUrl = String(recording.url || "").trim();
+          if (!videoUrl || seenVideoUrls.has(videoUrl)) {
+            continue;
+          }
+          seenVideoUrls.add(videoUrl);
+          const mb = Number(recording.size_bytes || 0) / (1024 * 1024);
+          const modifiedEpoch = Number(recording.modified_epoch);
+          const modified = Number.isFinite(modifiedEpoch)
+            ? new Date(modifiedEpoch * 1000).toLocaleString()
+            : "--";
+          items.push({
+            key: `recording-${recording.name}`,
+            kind: "video",
+            url: videoUrl,
+            thumbnailUrl: "",
+            title: String(recording.name || "Recording"),
+            subtitle: `${mb.toFixed(1)} MB | ${modified}`,
+            sourceEventId: null,
+          });
+        }
+        return items;
+      }
+
+      function renderMediaGrid() {
+        const grid = document.getElementById("recordings");
+        mediaItems = buildMediaItems();
+        grid.innerHTML = "";
+
+        if (!mediaItems.length) {
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No media yet. New snapshots and clips will appear here.";
+          grid.appendChild(empty);
+          selectedMediaKey = "";
+          const player = document.getElementById("player");
+          const imagePlayer = document.getElementById("image-player");
+          const viewerEmpty = document.getElementById("media-empty");
+          player.pause();
+          player.removeAttribute("src");
+          player.load();
+          player.classList.add("hidden");
+          imagePlayer.classList.add("hidden");
+          imagePlayer.removeAttribute("src");
+          viewerEmpty.classList.remove("hidden");
+          document.getElementById("player-note").textContent = "Select a media item to preview.";
+          return;
+        }
+
+        for (const item of mediaItems) {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "media-card";
+          card.dataset.mediaKey = item.key;
+
+          const thumbWrap = document.createElement("div");
+          thumbWrap.className = "media-card-thumb";
+
+          if (item.thumbnailUrl) {
+            const img = document.createElement("img");
+            img.src = `${item.thumbnailUrl}?t=${Date.now()}`;
+            img.alt = item.title;
+            thumbWrap.appendChild(img);
+          } else {
+            const fallback = document.createElement("div");
+            fallback.className = "media-card-thumb-fallback";
+            fallback.textContent = item.kind === "video" ? "Video" : "Image";
+            thumbWrap.appendChild(fallback);
+          }
+
+          const badge = document.createElement("div");
+          badge.className = "media-kind-badge";
+          badge.textContent = item.kind === "video" ? "Video" : "Image";
+          thumbWrap.appendChild(badge);
+
+          const body = document.createElement("div");
+          body.className = "media-card-body";
+          const title = document.createElement("div");
+          title.className = "media-card-title";
+          title.textContent = item.title;
+          const sub = document.createElement("div");
+          sub.className = "media-card-sub";
+          sub.textContent = item.subtitle;
+          body.appendChild(title);
+          body.appendChild(sub);
+
+          card.appendChild(thumbWrap);
+          card.appendChild(body);
+          card.addEventListener("click", () => selectMediaItem(item, { autoplay: item.kind === "video" }));
+          grid.appendChild(card);
+        }
+
+        if (selectedMediaKey) {
+          const selected = mediaItems.find((item) => item.key === selectedMediaKey);
+          if (selected) {
+            selectMediaItem(selected);
+            return;
+          }
+          selectedMediaKey = "";
+        }
+        if (!selectedMediaKey && mediaItems.length) {
+          selectMediaItem(mediaItems[0]);
+          return;
+        }
+        updateSelectedMediaCard();
+      }
+
+      function renderEventCards() {
+        const grid = document.getElementById("events");
+        grid.innerHTML = "";
+        if (!latestEvents.length) {
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No events yet.";
+          grid.appendChild(empty);
+          return;
+        }
+
+        for (const event of latestEvents) {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "event-card";
+
+          const thumbWrap = document.createElement("div");
+          thumbWrap.className = "event-thumb";
+          const snapshotUrl = resolveMediaUrl(event.snapshot);
+          if (snapshotUrl) {
+            const img = document.createElement("img");
+            img.src = `${snapshotUrl}?t=${Date.now()}`;
+            img.alt = `Event ${event.id} snapshot`;
+            thumbWrap.appendChild(img);
+          } else {
+            const fallback = document.createElement("div");
+            fallback.className = "event-thumb-fallback";
+            fallback.textContent = "No Snapshot";
+            thumbWrap.appendChild(fallback);
+          }
+
+          const body = document.createElement("div");
+          body.className = "event-card-body";
+          const title = document.createElement("div");
+          title.className = "event-title";
+          title.textContent = `${event.label ?? "event"} | conf ${safeNum(event.confidence)}`;
+          const sub = document.createElement("div");
+          sub.className = "event-sub";
+          sub.textContent = `${toLocalTime(event.ts_utc)} | ${event.severity_level ?? "unknown"} severity`;
+          body.appendChild(title);
+          body.appendChild(sub);
+
+          card.appendChild(thumbWrap);
+          card.appendChild(body);
+          card.addEventListener("click", () => openEventModal(event));
+          grid.appendChild(card);
+        }
+      }
+
       async function loadEvents() {
         const result = await fetch("/api/events?limit=25");
         const json = await result.json();
-        const list = document.getElementById("events");
-        list.innerHTML = "";
-        if (!json.events.length) {
-          const li = document.createElement("li");
-          li.className = "muted";
-          li.textContent = "No events yet.";
-          list.appendChild(li);
-          return;
-        }
-        for (const event of json.events) {
-          const li = document.createElement("li");
-          li.textContent = `${event.ts_utc} | ${event.label} | conf ${event.confidence.toFixed(2)}`;
-          list.appendChild(li);
-        }
+        latestEvents = Array.isArray(json.events) ? json.events : [];
+        renderEventCards();
+        renderMediaGrid();
       }
 
       async function loadRecordings() {
         const result = await fetch("/api/recordings?limit=200");
         const json = await result.json();
-        const list = document.getElementById("recordings");
-        list.innerHTML = "";
+        latestRecordings = Array.isArray(json.recordings) ? json.recordings : [];
+        renderMediaGrid();
+      }
 
-        if (!json.recordings.length) {
-          const li = document.createElement("li");
-          li.className = "muted";
-          li.textContent = "No recordings found yet.";
-          list.appendChild(li);
+      function getLogPane(key) {
+        return document.getElementById(key === "a" ? "log-text-a" : "log-text-b");
+      }
+
+      function getActiveLogPane() {
+        return getLogPane(activeLogPane);
+      }
+
+      function getInactiveLogPane() {
+        return getLogPane(activeLogPane === "a" ? "b" : "a");
+      }
+
+      function clearLogPaneAnimationClasses(node) {
+        node.classList.remove(
+          "anim-enter-from-right",
+          "anim-enter-from-left",
+          "anim-enter-active",
+          "anim-exit-to-left",
+          "anim-exit-to-right"
+        );
+      }
+
+      function renderLogContent(content, options = {}) {
+        const text = String(content || "(empty log)");
+        const direction = Number(options.direction || 0);
+        const animate = Boolean(options.animate && direction !== 0);
+        if (!animate || logPaneAnimating) {
+          const active = getActiveLogPane();
+          active.textContent = text;
           return;
         }
 
-        for (const item of json.recordings) {
-          const li = document.createElement("li");
-          const btn = document.createElement("button");
-          btn.className = "recording-btn";
-          const mb = (item.size_bytes / (1024 * 1024)).toFixed(1);
-          const ts = new Date(item.modified_epoch * 1000).toLocaleString();
-          btn.textContent = `${item.name} | ${mb} MB | ${ts}`;
-          btn.addEventListener("click", () => {
-            const player = document.getElementById("player");
-            player.src = item.url;
-            document.getElementById("player-note").textContent = `Playing: ${item.name}`;
-            player.play().catch(() => {});
-          });
-          li.appendChild(btn);
-          list.appendChild(li);
-        }
+        const current = getActiveLogPane();
+        const incoming = getInactiveLogPane();
+        clearLogPaneAnimationClasses(current);
+        clearLogPaneAnimationClasses(incoming);
+        incoming.textContent = text;
+        incoming.classList.remove("active");
+        incoming.classList.add(direction > 0 ? "anim-enter-from-right" : "anim-enter-from-left");
+
+        void incoming.offsetWidth;
+        logPaneAnimating = true;
+        current.classList.add(direction > 0 ? "anim-exit-to-left" : "anim-exit-to-right");
+        incoming.classList.add("anim-enter-active");
+
+        setTimeout(() => {
+          current.classList.remove("active");
+          clearLogPaneAnimationClasses(current);
+          current.textContent = "";
+          incoming.classList.add("active");
+          clearLogPaneAnimationClasses(incoming);
+          activeLogPane = activeLogPane === "a" ? "b" : "a";
+          logPaneAnimating = false;
+        }, 270);
       }
 
-      async function loadLogList() {
+      function currentLogName() {
+        if (!logFiles.length) {
+          return "";
+        }
+        return logFiles[currentLogIndex] || "";
+      }
+
+      function hasErrorInLog(content) {
+        return LOG_ERROR_PATTERN.test(String(content || ""));
+      }
+
+      function updateLogsTabAlertState() {
+        const hasAnyError = Array.from(logErrorsByFile.values()).some(Boolean);
+        logsTabBtn?.classList.toggle("alert", hasAnyError);
+      }
+
+      function updateLogHeader() {
+        const sourceName = document.getElementById("log-source-name");
+        const sourceSub = document.getElementById("log-source-sub");
+        const prevBtn = document.getElementById("log-prev");
+        const nextBtn = document.getElementById("log-next");
+
+        if (!logFiles.length) {
+          sourceName.textContent = "No logs available";
+          sourceName.classList.remove("error");
+          sourceSub.textContent = "0 / 0";
+          prevBtn.disabled = true;
+          nextBtn.disabled = true;
+          return;
+        }
+
+        const name = currentLogName();
+        const hasError = Boolean(logErrorsByFile.get(name));
+        sourceName.textContent = name;
+        sourceName.classList.toggle("error", hasError);
+        sourceSub.textContent = `${currentLogIndex + 1} / ${logFiles.length}${hasError ? " | errors detected" : ""}`;
+        const disableArrows = logFiles.length <= 1;
+        prevBtn.disabled = disableArrows;
+        nextBtn.disabled = disableArrows;
+      }
+
+      async function fetchLogContent(logName, lines) {
+        const result = await fetch(`/api/logs/${encodeURIComponent(logName)}?lines=${lines}`);
+        if (!result.ok) {
+          throw new Error(`Failed to load ${logName} (${result.status})`);
+        }
+        const json = await result.json();
+        return String(json.content || "(empty log)");
+      }
+
+      async function showCurrentLog(options = {}) {
+        if (!logFiles.length) {
+          renderLogContent("No logs available.");
+          updateLogHeader();
+          return;
+        }
+
+        const token = ++logRequestToken;
+        const logName = currentLogName();
+        const lines = Math.max(20, Math.min(2000, Number(document.getElementById("log-lines").value || "250")));
+        updateLogHeader();
+
+        try {
+          const content = await fetchLogContent(logName, lines);
+          if (token !== logRequestToken) {
+            return;
+          }
+          logErrorsByFile.set(logName, hasErrorInLog(content));
+          renderLogContent(content, options);
+        } catch (error) {
+          if (token !== logRequestToken) {
+            return;
+          }
+          logErrorsByFile.set(logName, true);
+          renderLogContent(`Failed to load ${logName}.`, options);
+        }
+
+        updateLogHeader();
+        updateLogsTabAlertState();
+      }
+
+      async function refreshLogErrorSignals(sampleLines = 120) {
+        if (!logFiles.length) {
+          logErrorsByFile = new Map();
+          updateLogsTabAlertState();
+          updateLogHeader();
+          return;
+        }
+        const checks = await Promise.all(
+          logFiles.map(async (name) => {
+            try {
+              const content = await fetchLogContent(name, sampleLines);
+              return [name, hasErrorInLog(content)];
+            } catch (error) {
+              return [name, true];
+            }
+          })
+        );
+        logErrorsByFile = new Map(checks);
+        updateLogHeader();
+        updateLogsTabAlertState();
+      }
+
+      async function refreshLogsPanel(options = {}) {
+        const preserveCurrent = Boolean(options.preserveCurrent ?? true);
+        const animate = Boolean(options.animate ?? false);
+        const direction = Number(options.direction || 0);
+        const previousName = preserveCurrent ? currentLogName() : "";
+
         const result = await fetch("/api/logs");
         const json = await result.json();
-        const select = document.getElementById("log-select");
-        select.innerHTML = "";
-        if (!json.logs.length) {
-          const opt = document.createElement("option");
-          opt.value = "";
-          opt.textContent = "No logs available";
-          select.appendChild(opt);
+        logFiles = Array.isArray(json.logs) ? json.logs : [];
+
+        if (!logFiles.length) {
+          logErrorsByFile = new Map();
+          currentLogIndex = 0;
+          renderLogContent("No logs available.");
+          updateLogHeader();
+          updateLogsTabAlertState();
           return;
         }
-        for (const name of json.logs) {
-          const opt = document.createElement("option");
-          opt.value = name;
-          opt.textContent = name;
-          select.appendChild(opt);
+
+        if (previousName && logFiles.includes(previousName)) {
+          currentLogIndex = logFiles.indexOf(previousName);
+        } else if (currentLogIndex >= logFiles.length) {
+          currentLogIndex = 0;
         }
+
+        await showCurrentLog({ animate, direction });
+        const sampleLines = Math.max(40, Math.min(240, Number(document.getElementById("log-lines").value || "250")));
+        await refreshLogErrorSignals(sampleLines);
       }
 
-      async function loadSelectedLog() {
-        const select = document.getElementById("log-select");
-        const name = select.value;
-        if (!name) {
-          document.getElementById("log-text").textContent = "No log selected.";
+      function stepLog(direction) {
+        if (!logFiles.length || logFiles.length === 1) {
           return;
         }
-        const lines = Number(document.getElementById("log-lines").value || "250");
-        const result = await fetch(`/api/logs/${encodeURIComponent(name)}?lines=${lines}`);
-        if (!result.ok) {
-          document.getElementById("log-text").textContent = "Failed to load log.";
-          return;
-        }
-        const json = await result.json();
-        document.getElementById("log-text").textContent = json.content || "(empty log)";
+        currentLogIndex = (currentLogIndex + direction + logFiles.length) % logFiles.length;
+        showCurrentLog({ animate: true, direction }).catch(console.error);
       }
 
-      async function loadServerLog() {
-        const lines = Number(document.getElementById("serverlog-lines").value || "250");
-        const result = await fetch(`/api/logs/${encodeURIComponent("backend.log")}?lines=${lines}`);
-        if (!result.ok) {
-          document.getElementById("serverlog-text").textContent =
-            "Failed to load backend.log. Start backend first.";
-          return;
-        }
-        const json = await result.json();
-        document.getElementById("serverlog-text").textContent = json.content || "(backend.log is empty)";
+      function wireLogCarousel() {
+        document.getElementById("log-prev").addEventListener("click", () => stepLog(-1));
+        document.getElementById("log-next").addEventListener("click", () => stepLog(1));
+        document.getElementById("log-refresh").addEventListener("click", () => {
+          refreshLogsPanel({ preserveCurrent: true, animate: false }).catch(console.error);
+        });
+        document.getElementById("log-lines").addEventListener("change", () => {
+          showCurrentLog({ animate: false }).catch(console.error);
+          refreshLogErrorSignals().catch(console.error);
+        });
       }
 
       function refreshLiveFrame() {
@@ -640,7 +1684,7 @@
       function toggleMobileFullscreen(shell) {
         const entering = !shell.classList.contains("mobile-fullscreen");
         shell.classList.toggle("mobile-fullscreen", entering);
-        document.body.classList.toggle("no-scroll", entering);
+        updateNoScrollState();
       }
 
       function wireLiveFullscreen() {
@@ -665,7 +1709,7 @@
           });
           note.textContent = "Tap live feed to enter or exit fullscreen.";
         } else {
-          note.textContent = "Hover live feed for fullscreen. Drag corner handles to resize.";
+          note.textContent = "Live feed fixed size. Use Fullscreen for expanded view.";
         }
 
         function updateFullscreenUi() {
@@ -679,68 +1723,21 @@
         document.addEventListener("webkitfullscreenchange", updateFullscreenUi);
       }
 
-      function applyLiveShellSize(width, height) {
-        const shell = document.getElementById("live-shell");
-        const liveTab = document.getElementById("live-tab");
-        const tabRect = liveTab.getBoundingClientRect();
-        const maxWidth = Math.max(260, Math.min(window.innerWidth - 70, tabRect.width - 10));
-        const maxHeight = Math.max(180, Math.min(window.innerHeight * 0.72, 900));
-        const clampedWidth = Math.min(maxWidth, Math.max(260, width));
-        const clampedHeight = Math.min(maxHeight, Math.max(180, height));
-        shell.style.width = `${clampedWidth}px`;
-        shell.style.height = `${clampedHeight}px`;
-      }
+      function wireEventModal() {
+        const modal = document.getElementById("event-modal");
+        const closeBtn = document.getElementById("event-modal-close");
 
-      function wireLiveResizeHandles() {
-        if (touchClient) {
-          return;
-        }
-        const shell = document.getElementById("live-shell");
-        const handles = Array.from(document.querySelectorAll(".resize-handle"));
-
-        handles.forEach((handle) => {
-          handle.addEventListener("pointerdown", (event) => {
-            event.preventDefault();
-            const corner = handle.dataset.corner || "se";
-            const rect = shell.getBoundingClientRect();
-            liveResizeState = {
-              pointerId: event.pointerId,
-              startX: event.clientX,
-              startY: event.clientY,
-              startWidth: rect.width,
-              startHeight: rect.height,
-              corner,
-            };
-            handle.setPointerCapture(event.pointerId);
-          });
+        closeBtn.addEventListener("click", closeEventModal);
+        modal.addEventListener("click", (event) => {
+          if (event.target === modal) {
+            closeEventModal();
+          }
         });
-
-        document.addEventListener("pointermove", (event) => {
-          if (!liveResizeState || event.pointerId !== liveResizeState.pointerId) {
-            return;
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && modal.classList.contains("open")) {
+            closeEventModal();
           }
-          const dx = event.clientX - liveResizeState.startX;
-          const dy = event.clientY - liveResizeState.startY;
-          const signX = liveResizeState.corner.includes("w") ? -1 : 1;
-          const signY = liveResizeState.corner.includes("n") ? -1 : 1;
-          applyLiveShellSize(
-            liveResizeState.startWidth + dx * signX,
-            liveResizeState.startHeight + dy * signY
-          );
         });
-
-        function stopResizing(event) {
-          if (!liveResizeState) {
-            return;
-          }
-          if (event.pointerId !== undefined && event.pointerId !== liveResizeState.pointerId) {
-            return;
-          }
-          liveResizeState = null;
-        }
-
-        document.addEventListener("pointerup", stopResizing);
-        document.addEventListener("pointercancel", stopResizing);
       }
 
       async function loadLatestSnapshot() {
@@ -764,30 +1761,21 @@
             loadConfig(),
             loadEvents(),
             loadRecordings(),
-            loadLogList(),
+            refreshLogsPanel({ preserveCurrent: true, animate: false }),
             loadLatestSnapshot(),
           ];
-          const serverLogPanel = document.getElementById("serverlogs-tab");
-          if (serverLogPanel && !serverLogPanel.classList.contains("hidden")) {
-            tasks.push(loadServerLog());
-          }
           await Promise.all(tasks);
         } catch (error) {
-          document.getElementById("health").textContent = "Dashboard API unavailable";
+          setTelemetryValue("telemetry-backend", "Unavailable", "warn");
           console.error(error);
         }
       }
 
       document.getElementById("live-refresh").addEventListener("click", startLiveFeed);
-      document.getElementById("load-log").addEventListener("click", () => {
-        loadSelectedLog().catch(console.error);
-      });
-      document.getElementById("load-server-log").addEventListener("click", () => {
-        loadServerLog().catch(console.error);
-      });
 
+      wireLogCarousel();
+      wireEventModal();
       wireLiveFullscreen();
-      wireLiveResizeHandles();
       wireLiveFrameStatus();
       refresh();
       startLiveFeed();

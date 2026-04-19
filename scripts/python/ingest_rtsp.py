@@ -78,7 +78,11 @@ def main() -> int:
 
     config_path = Path(args.config)
     if not config_path.exists():
-        config_path = ROOT / "configs" / "app" / "settings.example.json"
+        print(
+            f"Missing config file: {config_path}. "
+            "Use configs/app/settings.local.json (copy from settings.example.json first)."
+        )
+        return 1
     config = load_config(config_path)
 
     log_file = resolve_path(config["recording"]["log_file"])

@@ -23,6 +23,13 @@
   "storage": {
     "sqlite_path": "data/events/events.db"
   },
+  "jobs": {
+    "enabled": true,
+    "poll_interval_seconds": 2,
+    "retry_delay_seconds": 10,
+    "stale_running_seconds": 300,
+    "sample_limit": 100
+  },
   "detection": {
     "model_path": "yolov8n.pt",
     "confidence_threshold": 0.45,
@@ -52,8 +59,40 @@
   },
   "alerts": {
     "enabled": false,
+    "webhook_enabled": true,
     "webhook_url": "",
-    "timeout_seconds": 6
+    "timeout_seconds": 6,
+    "enqueue_background": true,
+    "job_max_attempts": 3,
+    "access_links": {
+      "local_url": "",
+      "tailscale_url": "",
+      "auto_detect_local": true,
+      "auto_detect_tailscale": true,
+      "dashboard_port": 8080
+    },
+    "smtp": {
+      "enabled": false,
+      "host": "YOUR_SMTP_HOST_HERE",
+      "port": 587,
+      "use_starttls": true,
+      "timeout_seconds": 10,
+      "username": "YOUR_SMTP_USERNAME_HERE",
+      "password": "YOUR_SMTP_PASSWORD_HERE",
+      "from_email": "YOUR_FROM_EMAIL_HERE",
+      "to_emails": [
+        "YOUR_ALERT_EMAIL_HERE"
+      ],
+      "subject_prefix": "Doorbell Alert",
+      "max_attachment_mb": 8,
+      "include_snapshot": true,
+      "include_clip_default": false
+    }
+  },
+  "auth": {
+    "enabled": false,
+    "session_secret": "PUT_LONG_RANDOM_SESSION_SECRET_HERE",
+    "session_hours": 24
   },
   "api": {
     "host": "0.0.0.0",

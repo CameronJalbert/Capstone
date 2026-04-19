@@ -6,7 +6,7 @@ Set-Location $root
 $venvPython = Resolve-Path ".\.venv\Scripts\python.exe"
 $configPath = ".\configs\app\settings.local.json"
 if (-not (Test-Path $configPath)) {
-    $configPath = ".\configs\app\settings.example.json"
+    throw "Missing runtime config: $configPath. Copy .\configs\app\settings.example.json to settings.local.json and set real local values."
 }
 
 $existingDetector = Get-CimInstance Win32_Process |

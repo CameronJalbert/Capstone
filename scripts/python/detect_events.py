@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.backend.storage.sqlite_store import (  # noqa: E402
+    enqueue_background_job,
     initialize_sqlite_schema,
     insert_event_record,
     resolve_sqlite_path,
@@ -194,12 +195,18 @@ def main() -> int:
 
     config_path = Path(args.config)
     if not config_path.exists():
-        config_path = ROOT / "configs" / "app" / "settings.example.json"
+        print(
+            f"Missing config file: {config_path}. "
+            "Use configs/app/settings.local.json (copy from settings.example.json first)."
+        )
+        return 1
     config = load_config(config_path)
 
     camera_cfg = config.get("camera", {})
     detect_cfg = config.get("detection", {})
     alerts_cfg = config.get("alerts", {})
+    alert_queue_enabled = bool(alerts_cfg.get("enqueue_background", True))
+    alert_job_max_attempts = max(int(alerts_cfg.get("job_max_attempts", 3)), 1)
 
     stream_url = str(camera_cfg.get("stream_url", "")).strip()
     rtsp_url = str(camera_cfg.get("rtsp_url", "")).strip()
@@ -262,6 +269,10 @@ def main() -> int:
     logger.info("Targets: %s", sorted(target_classes))
     logger.info("Confidence threshold: %.2f", confidence_threshold)
     logger.info("SQLite events DB: %s", sqlite_db_path)
+    logger.info(
+        "Alert dispatch mode: %s",
+        "background queue" if alert_queue_enabled else "inline webhook send",
+    )
     logger.info(
         "Runtime tuning: source_poll_fps=%.2f inference_max_fps=%.2f frame_skip=%d motion_gate=%s force_interval=%.1fs",
         source_poll_fps,
@@ -403,6 +414,8 @@ def main() -> int:
                 "confidence": detected["confidence"],
                 "class_id": detected["class_id"],
                 "snapshot": str(snapshot_path.relative_to(ROOT)).replace("\\", "/"),
+                "lifecycle_state": "detected",
+                "lifecycle_updated_ts_utc": ts_utc,
             }
             sqlite_event_id: int | None = None
             write_target = "sqlite"
@@ -418,15 +431,43 @@ def main() -> int:
                 if write_target == "sqlite":
                     write_target = "sqlite+ndjson"
 
-            sent = send_alert(event, alerts_cfg)
+            alert_status = "disabled"
+            sent = False
+            if alerts_cfg.get("enabled", False):
+                if alert_queue_enabled and sqlite_event_id is not None:
+                    try:
+                        alert_job_id = enqueue_background_job(
+                            sqlite_db_path,
+                            "dispatch_alert",
+                            payload={
+                                "event_id": int(sqlite_event_id),
+                                "include_snapshot": True,
+                                "include_clip": False,
+                            },
+                            max_attempts=alert_job_max_attempts,
+                        )
+                        sent = True
+                        alert_status = f"queued:{alert_job_id}"
+                    except Exception as exc:
+                        logger.exception(
+                            "Alert queue enqueue failed for event id=%s; falling back to inline send. error=%s",
+                            sqlite_event_id,
+                            exc,
+                        )
+                        sent = send_alert(event, alerts_cfg)
+                        alert_status = "inline_fallback_sent" if sent else "inline_fallback_failed"
+                else:
+                    sent = send_alert(event, alerts_cfg)
+                    alert_status = "inline_sent" if sent else "inline_failed"
             events_detected += 1
             logger.info(
-                "Event detected id=%s label=%s confidence=%.4f snapshot=%s alert_sent=%s motion_ratio=%.4f sink=%s",
+                "Event detected id=%s label=%s confidence=%.4f snapshot=%s alert_sent=%s alert_status=%s motion_ratio=%.4f sink=%s",
                 sqlite_event_id,
                 detected["label"],
                 detected["confidence"],
                 event["snapshot"],
                 sent,
+                alert_status,
                 motion_ratio_value,
                 write_target,
             )
