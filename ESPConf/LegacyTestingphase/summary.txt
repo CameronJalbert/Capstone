@@ -1,0 +1,29 @@
+CameraWebServer Config Summary (Most Recently Used)
+
+Purpose:
+- This folder is a modified ESP32-CAM CameraWebServer baseline used as the primary firmware branch during capstone stream testing.
+- It hosts the control UI on port 80 and MJPEG stream on port 81.
+
+What this config currently does:
+- Auto boots and starts Wi-Fi + camera web server in setup().
+- Uses JPEG pipeline for streaming (PIXFORMAT_JPEG).
+- Camera init starts high, then drops active stream framesize to QVGA for better frame rate.
+- PSRAM path enables better buffering:
+  - jpeg_quality = 10
+  - fb_count = 2
+  - grab_mode = CAMERA_GRAB_LATEST
+- Non-PSRAM fallback reduces frame size and uses DRAM.
+- Supports LED flash intensity controls in HTTP handlers.
+- Exposes standard endpoints: /, /status, /control, /capture, /stream plus advanced sensor/register endpoints.
+
+Important behavior seen in testing:
+- Camera web server and /stream endpoint start after power cycle (auto boot works).
+- Runtime camera settings can be changed from UI, but values reset on reboot (no persistent settings yet).
+- Stream source is effectively single-consumer in practice; competing viewers (settings page stream, /stream page, backend ingest) can interfere.
+- Slow/default camera settings can produce stale behavior downstream and make backend stream appear frozen/intermittent.
+
+Known gaps to address next:
+- Persist selected camera profile (resolution, quality, frame behavior) across reboot.
+- Improve arbitration/recovery when backend must reclaim stream after restart.
+- Add explicit health/recovery path for stream stalls (watchdog/reinit).
+- Add clear low-light policy (auto LED/profile switching) without overloading backend ingest.

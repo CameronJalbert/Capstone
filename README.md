@@ -21,7 +21,7 @@ The stack is hosted on a Windows laptop and provides live view, event detection,
 - Recorder pipeline is still transitional
 - RTSP is currently under evaluation (not finalized as required source path)
 
-## What’s In This Repo
+## What's In This Repo
 
 - `app/backend/`: FastAPI API, ingest service, SQLite/event routes
 - `app/frontend/`: dashboard UI
@@ -29,6 +29,7 @@ The stack is hosted on a Windows laptop and provides live view, event detection,
 - `scripts/python/`: detection/recording/support scripts
 - `configs/app/`: app settings templates
 - `configs/openwrt/`: firewall/config templates
+- `ESPConf/`: ESP32 camera testing history and template-safe legacy configs
 
 ## Quick Start (Windows)
 
@@ -39,3 +40,7 @@ Copy-Item .\configs\app\settings.example.json .\configs\app\settings.local.json
 ```
 
 Open: [http://localhost:8080](http://localhost:8080)
+
+## Known Issues
+
+- Backend can start successfully after restart but still become unusable shortly after; restart stability is an active troubleshooting item.

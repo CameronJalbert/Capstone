@@ -1,0 +1,1 @@
+Simple script to test if camera is booting properly. Replace template INO file.

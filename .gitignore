@@ -34,3 +34,6 @@ Handoff/
 *.jks
 id_rsa
 id_ed25519
+
+# ESP32 local credentials (use the .example file for Git)
+ESPConf/LegacyTestingphase/CameraWebServer.ino
