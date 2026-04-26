@@ -31,6 +31,17 @@ The stack is hosted on a Windows laptop and provides live view, event detection,
 - `configs/openwrt/`: firewall/config templates
 - `ESPConf/`: ESP32 camera testing history and template-safe legacy configs
 
+## ESP Firmware Safety Note
+
+- Keep real firmware credentials/tokens only in local runtime `.ino` files.
+- For Git-safe sharing, use the matching template:
+  - `ESPConf/LegacyTestingphase/CameraWebServer/CameraWebServer.example.ino`
+- If missing locally, create runtime file by copying the example and filling real local values:
+
+```powershell
+Copy-Item .\ESPConf\LegacyTestingphase\CameraWebServer\CameraWebServer.example.ino .\ESPConf\LegacyTestingphase\CameraWebServer\CameraWebServer.ino
+```
+
 ## Quick Start (Windows)
 
 ```powershell

@@ -8,6 +8,19 @@
     "live_frame_width": 1280,
     "live_frame_height": 720
   },
+  "camera_control": {
+    "enabled": false,
+    "base_url": "http://YOUR_CAMERA_HOST_HERE",
+    "token": "YOUR_CAMERA_CONTROL_TOKEN_HERE",
+    "timeout_seconds": 4,
+    "profile_automation": {
+      "enabled": false,
+      "day_start_hour": 7,
+      "night_start_hour": 19,
+      "poll_interval_seconds": 60,
+      "min_switch_interval_seconds": 300
+    }
+  },
   "recording": {
     "ffmpeg_path": "ffmpeg",
     "segment_seconds": 60,

@@ -40,6 +40,7 @@ class CameraIngestService:
         self._latest_frame_seq = 0
         self._frame_count = 0
         self._consecutive_failures = 0
+        self._active_stream_clients = 0
 
         self._placeholder_jpeg = self._build_placeholder_jpeg()
 
@@ -114,17 +115,20 @@ class CameraIngestService:
 
     def generate_mjpeg_stream(self) -> Generator[bytes, None, None]:
         """Yield multipart JPEG chunks for backend live stream proxy."""
-        output_fps = max(self._config.output_fps, 1.0)
-        min_interval_seconds = 1.0 / output_fps
         boundary = b"--frame\r\n"
         header = b"Content-Type: image/jpeg\r\n"
         last_seq = -1
         last_emit_ts = 0.0
 
+        with self._lock:
+            self._active_stream_clients += 1
+
         try:
-            while True:
+            while not self._stop_event.is_set():
                 with self._lock:
                     seq = self._latest_frame_seq
+                    output_fps = max(self._config.output_fps, 1.0)
+                min_interval_seconds = 1.0 / output_fps
                 now = time.time()
                 if seq == last_seq and (now - last_emit_ts) < min_interval_seconds:
                     time.sleep(0.01)
@@ -140,6 +144,9 @@ class CameraIngestService:
                 last_emit_ts = now
         except GeneratorExit:
             return
+        finally:
+            with self._lock:
+                self._active_stream_clients = max(0, self._active_stream_clients - 1)
 
     def status(self) -> dict[str, Any]:
         """Expose ingest status details for diagnostics and UI health."""
@@ -149,6 +156,7 @@ class CameraIngestService:
             latest_ts = self._latest_frame_ts
             cfg = self._config
             capture_open = bool(self._capture is not None and self._capture.isOpened())
+            active_stream_clients = self._active_stream_clients
 
         now = time.time()
         age_seconds: float | None = None
@@ -162,6 +170,7 @@ class CameraIngestService:
             "source_type": cfg.source_type,
             "stream_configured": bool(cfg.stream_url or cfg.source_type == "usb"),
             "capture_open": capture_open,
+            "active_stream_clients": active_stream_clients,
             "frame_count": frame_count,
             "consecutive_failures": failures,
             "last_frame_age_seconds": age_seconds,

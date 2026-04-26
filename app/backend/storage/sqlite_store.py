@@ -34,6 +34,21 @@ JOB_STATUSES: tuple[str, ...] = (
     "failed",
     "cancelled",
 )
+CAMERA_MODES: tuple[str, ...] = (
+    "base",
+    "manual_saved",
+    "manual_temporary",
+    "adaptive_capture",
+    "auto_day_night_profile",
+)
+CAMERA_SYNC_STATUSES: tuple[str, ...] = (
+    "in_sync",
+    "drift_detected",
+    "reapplying",
+    "camera_unavailable",
+)
+DEFAULT_CAMERA_MODE = "base"
+DEFAULT_CAMERA_SYNC_STATUS = "camera_unavailable"
 
 
 def resolve_sqlite_path(settings: dict[str, Any], root: Path) -> Path:
@@ -493,6 +508,79 @@ def _migration_008_add_background_jobs_table(connection: sqlite3.Connection) -> 
     )
 
 
+def _default_camera_mode_canonical_state() -> dict[str, Any]:
+    return {
+        "modes": {
+            "base": {"profile": "base", "settings": {}},
+            "manual_saved": {"settings": {}},
+            "manual_temporary": {"settings": {}},
+            "adaptive_capture": {
+                "settings": {
+                    "xclk": 15,
+                    "brightness": 0,
+                    "contrast": 0,
+                    "saturation": 0,
+                    "led_intensity": 0,
+                },
+                "runtime": {
+                    "low_light_active": False,
+                    "last_xclk_change_ts_utc": "",
+                    "last_xclk_attempt_ts_utc": "",
+                    "last_led_change_ts_utc": "",
+                    "last_tweak_ts_utc": "",
+                },
+            },
+            "auto_day_night_profile": {
+                "day_profile": "day",
+                "night_profile": "night",
+            },
+        },
+        "metadata": {
+            "last_adopted_mode": "",
+            "last_adopted_ts_utc": "",
+        },
+    }
+
+
+def _migration_009_add_camera_mode_state_table(connection: sqlite3.Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS camera_mode_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            active_mode TEXT NOT NULL DEFAULT 'base',
+            mode_revision INTEGER NOT NULL DEFAULT 1,
+            sync_status TEXT NOT NULL DEFAULT 'camera_unavailable',
+            last_reconcile_action TEXT NOT NULL DEFAULT 'initialized',
+            canonical_state_json TEXT NOT NULL DEFAULT '{}',
+            last_camera_status_json TEXT NOT NULL DEFAULT '{}',
+            last_apply_result_json TEXT NOT NULL DEFAULT '{}',
+            last_error TEXT,
+            created_ts_utc TEXT NOT NULL,
+            updated_ts_utc TEXT NOT NULL
+        );
+        """
+    )
+    now_utc = _utc_now()
+    cursor.execute("SELECT id FROM camera_mode_state WHERE id = 1;")
+    if cursor.fetchone() is None:
+        cursor.execute(
+            """
+            INSERT INTO camera_mode_state (
+                id, active_mode, mode_revision, sync_status, last_reconcile_action,
+                canonical_state_json, last_camera_status_json, last_apply_result_json,
+                last_error, created_ts_utc, updated_ts_utc
+            )
+            VALUES (1, 'base', 1, 'camera_unavailable', 'initialized', ?, '{}', '{}', NULL, ?, ?);
+            """,
+            (
+                json.dumps(_default_camera_mode_canonical_state(), separators=(",", ":"), sort_keys=True),
+                now_utc,
+                now_utc,
+            ),
+        )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationFunc]] = [
     (1, "create_event_records_base", _migration_001_create_event_records_base),
     (2, "add_class_id_column", _migration_002_add_class_id_column),
@@ -502,6 +590,7 @@ MIGRATIONS: list[tuple[int, str, MigrationFunc]] = [
     (6, "add_canonical_and_policy_columns", _migration_006_add_canonical_and_policy_columns),
     (7, "backfill_policy_and_add_indexes", _migration_007_backfill_policy_and_add_indexes),
     (8, "add_background_jobs_table", _migration_008_add_background_jobs_table),
+    (9, "add_camera_mode_state_table", _migration_009_add_camera_mode_state_table),
 ]
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -1082,6 +1171,188 @@ def background_job_stats(db_path: Path) -> dict[str, Any]:
         connection.close()
 
 
+def _camera_mode_from_text(value: Any) -> str:
+    text = _normalized_text(value).lower()
+    return text if text in CAMERA_MODES else DEFAULT_CAMERA_MODE
+
+
+def _camera_sync_status_from_text(value: Any) -> str:
+    text = _normalized_text(value).lower()
+    return text if text in CAMERA_SYNC_STATUSES else DEFAULT_CAMERA_SYNC_STATUS
+
+
+def _json_to_object(value: Any, *, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    text = _normalized_text(value)
+    if not text:
+        return dict(default or {})
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        return dict(default or {})
+    return decoded if isinstance(decoded, dict) else dict(default or {})
+
+
+def _normalize_camera_mode_canonical_state(raw: Any) -> dict[str, Any]:
+    state = _default_camera_mode_canonical_state()
+    candidate = raw if isinstance(raw, dict) else {}
+    modes = candidate.get("modes")
+    if isinstance(modes, dict):
+        for mode_name in state["modes"]:
+            incoming = modes.get(mode_name)
+            if isinstance(incoming, dict):
+                merged = dict(state["modes"][mode_name])
+                merged.update(incoming)
+                state["modes"][mode_name] = merged
+    metadata = candidate.get("metadata")
+    if isinstance(metadata, dict):
+        merged_meta = dict(state["metadata"])
+        merged_meta.update(metadata)
+        state["metadata"] = merged_meta
+    return state
+
+
+def _camera_mode_row_to_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "active_mode": _camera_mode_from_text(row["active_mode"]),
+        "mode_revision": int(row["mode_revision"] or 1),
+        "sync_status": _camera_sync_status_from_text(row["sync_status"]),
+        "last_reconcile_action": _normalized_text(row["last_reconcile_action"]) or "unknown",
+        "canonical_state": _normalize_camera_mode_canonical_state(_json_to_object(row["canonical_state_json"])),
+        "last_camera_status": _json_to_object(row["last_camera_status_json"]),
+        "last_apply_result": _json_to_object(row["last_apply_result_json"]),
+        "last_error": _normalized_text(row["last_error"]),
+        "created_ts_utc": row["created_ts_utc"],
+        "updated_ts_utc": row["updated_ts_utc"],
+    }
+
+
+def _ensure_camera_mode_state_row(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "camera_mode_state"):
+        return
+    cursor = connection.cursor()
+    cursor.execute("SELECT id FROM camera_mode_state WHERE id = 1;")
+    if cursor.fetchone() is not None:
+        return
+    now_utc = _utc_now()
+    cursor.execute(
+        """
+        INSERT INTO camera_mode_state (
+            id, active_mode, mode_revision, sync_status, last_reconcile_action,
+            canonical_state_json, last_camera_status_json, last_apply_result_json,
+            last_error, created_ts_utc, updated_ts_utc
+        )
+        VALUES (1, 'base', 1, 'camera_unavailable', 'initialized', ?, '{}', '{}', NULL, ?, ?);
+        """,
+        (
+            json.dumps(_default_camera_mode_canonical_state(), separators=(",", ":"), sort_keys=True),
+            now_utc,
+            now_utc,
+        ),
+    )
+    connection.commit()
+
+
+def fetch_camera_mode_state(db_path: Path) -> dict[str, Any]:
+    """Return canonical camera mode state payload used by camera-control orchestration."""
+    connection = _connect(db_path)
+    try:
+        _ensure_camera_mode_state_row(connection)
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT active_mode, mode_revision, sync_status, last_reconcile_action,
+                   canonical_state_json, last_camera_status_json, last_apply_result_json,
+                   last_error, created_ts_utc, updated_ts_utc
+            FROM camera_mode_state
+            WHERE id = 1;
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("camera_mode_state row is missing after initialization")
+        return _camera_mode_row_to_payload(row)
+    finally:
+        connection.close()
+
+
+def save_camera_mode_state(
+    db_path: Path,
+    state: dict[str, Any],
+    *,
+    bump_revision: bool = False,
+) -> dict[str, Any]:
+    """Persist canonical camera mode state and return normalized saved payload."""
+    connection = _connect(db_path)
+    try:
+        _ensure_camera_mode_state_row(connection)
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT active_mode, mode_revision, sync_status, last_reconcile_action,
+                   canonical_state_json, last_camera_status_json, last_apply_result_json,
+                   last_error, created_ts_utc, updated_ts_utc
+            FROM camera_mode_state
+            WHERE id = 1;
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("camera_mode_state row is missing after initialization")
+        current = _camera_mode_row_to_payload(row)
+        mode_revision = int(current["mode_revision"])
+        if bump_revision:
+            mode_revision += 1
+        merged = {
+            "active_mode": _camera_mode_from_text(state.get("active_mode", current["active_mode"])),
+            "mode_revision": mode_revision,
+            "sync_status": _camera_sync_status_from_text(state.get("sync_status", current["sync_status"])),
+            "last_reconcile_action": _normalized_text(
+                state.get("last_reconcile_action", current["last_reconcile_action"])
+            )
+            or "unknown",
+            "canonical_state": _normalize_camera_mode_canonical_state(
+                state.get("canonical_state", current["canonical_state"])
+            ),
+            "last_camera_status": (
+                state["last_camera_status"]
+                if isinstance(state.get("last_camera_status"), dict)
+                else current["last_camera_status"]
+            ),
+            "last_apply_result": (
+                state["last_apply_result"]
+                if isinstance(state.get("last_apply_result"), dict)
+                else current["last_apply_result"]
+            ),
+            "last_error": _normalized_text(state.get("last_error", current["last_error"])) or "",
+            "created_ts_utc": current["created_ts_utc"],
+            "updated_ts_utc": _utc_now(),
+        }
+        cursor.execute(
+            """
+            UPDATE camera_mode_state
+            SET active_mode=?, mode_revision=?, sync_status=?, last_reconcile_action=?,
+                canonical_state_json=?, last_camera_status_json=?, last_apply_result_json=?,
+                last_error=?, updated_ts_utc=?
+            WHERE id = 1;
+            """,
+            (
+                merged["active_mode"],
+                int(merged["mode_revision"]),
+                merged["sync_status"],
+                merged["last_reconcile_action"],
+                json.dumps(merged["canonical_state"], separators=(",", ":"), sort_keys=True),
+                json.dumps(merged["last_camera_status"], separators=(",", ":"), sort_keys=True),
+                json.dumps(merged["last_apply_result"], separators=(",", ":"), sort_keys=True),
+                merged["last_error"] or None,
+                merged["updated_ts_utc"],
+            ),
+        )
+        connection.commit()
+        return merged
+    finally:
+        connection.close()
+
+
 def import_ndjson_events_if_sqlite_empty(db_path: Path, events_file: Path) -> int:
     if not events_file.exists():
         return 0
@@ -1573,6 +1844,23 @@ def sqlite_status(db_path: Path) -> dict[str, Any]:
                 "cancelled": int(jobs["cancelled"] or 0),
                 "ready_now": int(jobs["ready_now"] or 0),
             }
+        camera_mode = {
+            "active_mode": DEFAULT_CAMERA_MODE,
+            "mode_revision": 0,
+            "sync_status": DEFAULT_CAMERA_SYNC_STATUS,
+        }
+        if _table_exists(connection, "camera_mode_state"):
+            _ensure_camera_mode_state_row(connection)
+            cursor.execute(
+                "SELECT active_mode, mode_revision, sync_status FROM camera_mode_state WHERE id = 1;"
+            )
+            mode_row = cursor.fetchone()
+            if mode_row is not None:
+                camera_mode = {
+                    "active_mode": _camera_mode_from_text(mode_row["active_mode"]),
+                    "mode_revision": int(mode_row["mode_revision"] or 0),
+                    "sync_status": _camera_sync_status_from_text(mode_row["sync_status"]),
+                }
         return {
             "db_exists": True,
             "event_records": count,
@@ -1582,6 +1870,7 @@ def sqlite_status(db_path: Path) -> dict[str, Any]:
             "missing_severity": int(policy["missing_severity"] or 0),
             "missing_retention": int(policy["missing_retention"] or 0),
             "background_jobs": job_totals,
+            "camera_mode_state": camera_mode,
         }
     finally:
         connection.close()

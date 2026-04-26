@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Doorbell Camera Control Panel</title>
+    <title>LAN CAM Control Panel</title>
     <style>
       :root {
         --bg: #081021;
@@ -25,6 +25,41 @@
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         background: radial-gradient(circle at top right, var(--bg2), var(--bg));
         color: var(--text);
+      }
+
+      .server-action-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 25000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(248, 113, 113, 0.65);
+        background: linear-gradient(90deg, rgba(127, 29, 29, 0.95), rgba(185, 28, 28, 0.95));
+        color: #ffe4e6;
+        font-size: 0.9rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        transform: translateY(-120%);
+        transition: transform 0.2s ease;
+      }
+
+      .server-action-banner.show {
+        transform: translateY(0);
+      }
+
+      .server-action-countdown {
+        font-variant-numeric: tabular-nums;
+        background: rgba(15, 27, 54, 0.35);
+        border: 1px solid rgba(255, 228, 230, 0.45);
+        border-radius: 999px;
+        padding: 2px 8px;
+        min-width: 54px;
+        text-align: center;
       }
 
       .wrap {
@@ -64,6 +99,16 @@
         border-radius: 999px;
         padding: 8px 14px;
         cursor: pointer;
+        transition: transform 0.12s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      }
+
+      .tab-btn:hover {
+        border-color: rgba(96, 165, 250, 0.9);
+        background: rgba(22, 38, 74, 0.9);
+      }
+
+      .tab-btn:active {
+        transform: translateY(1px) scale(0.99);
       }
 
       .tab-btn.active {
@@ -664,6 +709,32 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 7px 10px;
+        transition: transform 0.12s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled),
+      select:hover,
+      input:hover {
+        border-color: rgba(96, 165, 250, 0.92);
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35) inset;
+      }
+
+      button:active:not(:disabled),
+      .media-card:active,
+      .event-card:active,
+      .log-nav-btn:active {
+        transform: translateY(1px) scale(0.99);
+      }
+
+      button:disabled,
+      select:disabled,
+      input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
       }
 
       .controls {
@@ -674,6 +745,322 @@
         flex-wrap: wrap;
       }
 
+      .profile-quick-help {
+        margin-top: -6px;
+        margin-bottom: 10px;
+        font-size: 0.78rem;
+      }
+
+      .reboot-controls {
+        gap: 8px;
+      }
+
+      .reboot-delay-input {
+        min-width: 92px;
+        width: 92px;
+      }
+
+      .automation-state-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .auto-config-anchor {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .auto-config-trigger {
+        font-size: 0.75rem;
+        padding: 3px 8px;
+        border-radius: 999px;
+      }
+
+      .auto-config-popover {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 8px);
+        min-width: 240px;
+        max-width: min(320px, 82vw);
+        padding: 8px 10px;
+        border: 1px solid rgba(96, 165, 250, 0.55);
+        border-radius: 8px;
+        background: rgba(8, 16, 33, 0.94);
+        color: #dbe8ff;
+        font-size: 0.77rem;
+        line-height: 1.35;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        transform: translateY(4px);
+        pointer-events: none;
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        user-select: text;
+        z-index: 20;
+      }
+
+      .auto-config-anchor:hover .auto-config-popover,
+      .auto-config-anchor:focus-within .auto-config-popover,
+      .auto-config-anchor.open .auto-config-popover {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .auto-config-mobile {
+        display: none;
+        margin: -4px 0 12px;
+        user-select: text;
+      }
+
+      .auto-config-editor {
+        margin-top: -4px;
+      }
+
+      .schedule-input {
+        min-width: 96px;
+      }
+
+      .camera-status-badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.78rem;
+        background: rgba(8, 16, 33, 0.55);
+      }
+
+      .badge.ok {
+        border-color: rgba(45, 212, 191, 0.7);
+        color: #99f6e4;
+      }
+
+      .badge.warn {
+        border-color: rgba(245, 158, 11, 0.72);
+        color: #fcd34d;
+      }
+
+      .badge.danger {
+        border-color: rgba(248, 113, 113, 0.82);
+        color: #fecaca;
+      }
+
+      .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
+      }
+
+      .setting-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(19, 31, 63, 0.45);
+        padding: 10px;
+      }
+
+      .setting-label {
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .setting-value {
+        margin-top: 6px;
+        font-weight: 600;
+      }
+
+      .setting-reported {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.75rem;
+      }
+
+      .setting-control {
+        margin-top: 8px;
+        width: 100%;
+      }
+
+      .readable-panel {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(8, 16, 33, 0.68);
+        padding: 12px;
+      }
+
+      .readable-title {
+        font-size: 0.92rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .kv-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+
+      .kv-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.9fr) 1.1fr;
+        gap: 8px;
+        align-items: start;
+        border-bottom: 1px solid rgba(159, 176, 214, 0.12);
+        padding-bottom: 4px;
+      }
+
+      .kv-row:last-child {
+        border-bottom: 0;
+      }
+
+      .kv-key {
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .kv-value {
+        font-size: 0.84rem;
+        word-break: break-word;
+      }
+
+      .raw-toggle {
+        margin-top: 10px;
+      }
+
+      .raw-toggle > summary {
+        cursor: pointer;
+        color: #cfe1ff;
+        font-size: 0.82rem;
+      }
+
+      .raw-toggle > summary:hover {
+        color: #ffffff;
+      }
+
+      .util-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(8, 16, 33, 0.54);
+        padding: 12px;
+      }
+
+      .util-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .util-title {
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+
+      .util-value {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .util-bar-shell {
+        position: relative;
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        overflow: hidden;
+        height: 14px;
+        background: rgba(19, 31, 63, 0.45);
+      }
+
+      .util-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #2dd4bf, #60a5fa);
+        transition: width 0.2s ease;
+      }
+
+      .util-bar-shell.storage:hover .util-bar-fill {
+        opacity: 0.25;
+      }
+
+      .storage-segments {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        pointer-events: none;
+      }
+
+      .util-bar-shell.storage:hover .storage-segments {
+        opacity: 1;
+      }
+
+      .storage-segment {
+        height: 100%;
+      }
+
+      .storage-legend {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .storage-legend-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 0.78rem;
+      }
+
+      .server-control-card {
+        margin-top: 10px;
+      }
+
+      .server-control-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .server-control-actions button {
+        min-width: 168px;
+      }
+
+      .danger-btn {
+        border-color: rgba(248, 113, 113, 0.65);
+        background: rgba(127, 29, 29, 0.45);
+      }
+
+      .danger-btn:hover:not(:disabled) {
+        border-color: rgba(248, 113, 113, 0.95);
+        box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.45) inset;
+      }
+
+      .storage-legend-left {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+      }
+
       .hidden {
         display: none;
       }
@@ -681,6 +1068,11 @@
       @media (max-width: 980px) {
         .row {
           grid-template-columns: 1fr;
+        }
+
+        .kv-row {
+          grid-template-columns: 1fr;
+          gap: 2px;
         }
 
         .live-layout {
@@ -704,6 +1096,16 @@
         }
       }
 
+      @media (min-width: 981px) {
+        .reboot-controls {
+          flex-wrap: nowrap;
+        }
+
+        .reboot-controls label {
+          white-space: nowrap;
+        }
+      }
+
       @media (hover: none), (pointer: coarse) {
         .live-fullscreen-btn {
           display: none;
@@ -715,20 +1117,33 @@
           height: 280px;
           touch-action: manipulation;
         }
+
+        .auto-config-anchor {
+          display: none;
+        }
+
+        .auto-config-mobile {
+          display: block;
+        }
       }
     </style>
   </head>
   <body>
+    <div class="server-action-banner" id="server-action-banner" role="status" aria-live="assertive">
+      <span id="server-action-text">Server shutting down</span>
+      <span class="server-action-countdown" id="server-action-countdown">5.0s</span>
+    </div>
     <main class="wrap">
       <header class="top">
         <div>
-          <h1>Doorbell Camera Control Panel</h1>
-          <div class="sub">Webserver-first workflow: live feed, recordings, events, and logs.</div>
+          <h1>LAN CAM Control Panel</h1>
+          <div class="sub">Created by Cameron Jalbert.</div>
         </div>
       </header>
 
       <nav class="nav">
         <button class="tab-btn active" data-tab="live-tab">Live Feed</button>
+        <button class="tab-btn" data-tab="camera-tab">Camera</button>
         <button class="tab-btn" data-tab="recordings-tab">Recordings</button>
         <button class="tab-btn" data-tab="events-tab">Events</button>
         <button class="tab-btn" data-tab="logs-tab">Logs</button>
@@ -780,12 +1195,69 @@
         </article>
         <article style="margin-top: 14px;">
           <h3>Media Library</h3>
+          <div class="controls" id="recordings-filter-controls">
+            <label for="recordings-filter-q">Search</label>
+            <input id="recordings-filter-q" type="text" placeholder="name contains..." />
+            <label for="recordings-filter-range">Range</label>
+            <select id="recordings-filter-range">
+              <option value="all">All</option>
+              <option value="24h">Last 24 Hours</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+            </select>
+            <label for="recordings-filter-sort">Sort</label>
+            <select id="recordings-filter-sort">
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="largest">Largest</option>
+              <option value="smallest">Smallest</option>
+              <option value="name">Name</option>
+            </select>
+            <button id="recordings-filter-apply" type="button">Apply</button>
+            <button id="recordings-filter-clear" type="button">Clear</button>
+            <button id="recordings-page-prev" type="button">Prev</button>
+            <button id="recordings-page-next" type="button">Next</button>
+            <span class="muted" id="recordings-page-info">Page -- of -- | Total --</span>
+          </div>
           <div class="media-grid" id="recordings"></div>
         </article>
       </section>
 
       <section class="panel hidden" id="events-tab">
         <h3>Recent Detection Events</h3>
+        <div class="controls" id="events-filter-controls">
+          <label for="events-filter-q">Search</label>
+          <input id="events-filter-q" type="text" placeholder="label or id..." />
+          <label for="events-filter-severity">Severity</label>
+          <select id="events-filter-severity">
+            <option value="all">All</option>
+            <option value="unknown">Unknown</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+          <label for="events-filter-media">Media</label>
+          <select id="events-filter-media">
+            <option value="all">All</option>
+            <option value="snapshot">Has Snapshot</option>
+            <option value="clip">Has Clip</option>
+            <option value="both">Has Both</option>
+            <option value="none">No Media</option>
+          </select>
+          <label for="events-filter-range">Range</label>
+          <select id="events-filter-range">
+            <option value="all">All</option>
+            <option value="24h">Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+          </select>
+          <button id="events-filter-apply" type="button">Apply</button>
+          <button id="events-filter-clear" type="button">Clear</button>
+          <button id="events-page-prev" type="button">Prev</button>
+          <button id="events-page-next" type="button">Next</button>
+          <span class="muted" id="events-page-info">Page -- of -- | Total --</span>
+        </div>
         <div class="events-grid" id="events"></div>
       </section>
 
@@ -807,16 +1279,164 @@
         </div>
       </section>
 
+      <section class="panel hidden" id="camera-tab">
+        <div class="row">
+          <article>
+            <h3>Camera Health</h3>
+            <p class="muted" id="camera-control-note">Loading camera control readiness...</p>
+            <div class="camera-status-badges">
+              <span class="badge" id="camera-sync-badge">Sync: --</span>
+              <span class="badge" id="camera-mode-badge">Mode: --</span>
+            </div>
+            <div class="controls">
+              <button id="camera-status-refresh" type="button">Refresh Camera Status</button>
+              <button id="camera-health-check" type="button">Run Health Check</button>
+              <span class="muted" id="camera-active-profile">Active Profile: --</span>
+            </div>
+            <div class="controls">
+              <label for="camera-profile-name">Profile</label>
+              <select id="camera-profile-name">
+                <option value="base">base</option>
+                <option value="day">day</option>
+                <option value="night">night</option>
+              </select>
+              <button id="camera-profile-apply" type="button" title="Quick manual testing only. Not canonical.">Apply Profile</button>
+            </div>
+            <p class="muted profile-quick-help" id="camera-profile-quick-help">
+              Quick manual testing only. This does not update canonical mode policy and is ignored when you set active mode. Reboot follow-up reasserts mode policy unless auto mode is paused.
+            </p>
+            <div class="controls reboot-controls">
+              <label for="camera-reboot-delay-ms">Reboot Delay (ms)</label>
+              <input
+                id="camera-reboot-delay-ms"
+                class="reboot-delay-input"
+                type="number"
+                min="100"
+                max="10000"
+                step="50"
+                value="250"
+              />
+              <button id="camera-reboot-btn" type="button">Reboot Camera</button>
+            </div>
+            <div class="controls">
+              <button id="camera-auto-enable" type="button">Enable Auto Day/Night</button>
+              <button id="camera-auto-disable" type="button">Disable Auto Day/Night</button>
+              <button id="camera-auto-config" type="button">Use Config Default</button>
+              <span class="automation-state-wrap muted">
+                <span id="camera-auto-state">Automation: --</span>
+                <span class="auto-config-anchor" id="camera-auto-config-anchor">
+                  <button id="camera-auto-config-toggle" class="auto-config-trigger" type="button" aria-expanded="false">
+                    Config Schedule
+                  </button>
+                  <span class="auto-config-popover" id="camera-auto-config-popover">Config: --</span>
+                </span>
+              </span>
+            </div>
+            <p class="muted auto-config-mobile" id="camera-auto-config-mobile">Config: --</p>
+            <div class="controls auto-config-editor">
+              <label for="camera-auto-day-hour">Day Start</label>
+              <select id="camera-auto-day-hour" class="schedule-input"></select>
+              <label for="camera-auto-night-hour">Night Start</label>
+              <select id="camera-auto-night-hour" class="schedule-input"></select>
+              <button id="camera-auto-schedule-save" type="button">Save Schedule</button>
+            </div>
+            <p class="muted" id="camera-mode-help">
+              Auto mode + automation ON: scheduler owns day/night profile switching. Auto mode + automation OFF: current profile is held.
+            </p>
+          </article>
+          <article>
+            <h3>Mode Engine</h3>
+            <div class="controls">
+              <label for="camera-mode-name">Mode</label>
+              <select id="camera-mode-name">
+                <option value="base">base</option>
+                <option value="manual_saved">manual_saved</option>
+                <option value="manual_temporary">manual_temporary</option>
+                <option value="adaptive_capture">adaptive_capture</option>
+                <option value="auto_day_night_profile">auto_day_night_profile</option>
+              </select>
+              <button id="camera-mode-apply" type="button">Set Active Mode</button>
+            </div>
+            <div class="controls">
+              <button id="camera-sync-adopt" type="button">Adopt Current Camera State</button>
+              <button id="camera-sync-reapply" type="button">Reapply Canonical Policy</button>
+            </div>
+            <div class="readable-panel" id="camera-mode-state-readable">No mode-state loaded yet.</div>
+            <details class="raw-toggle">
+              <summary>Raw JSON</summary>
+              <pre id="camera-mode-state-output">No mode-state loaded yet.</pre>
+            </details>
+          </article>
+        </div>
+        <article style="margin-top: 14px;">
+          <h3>Curated Settings</h3>
+          <p class="muted">Each control is mapped to firmware-safe camera settings with mode-aware persistence.</p>
+          <div class="settings-grid" id="camera-settings-grid"></div>
+          <div class="controls" style="margin-top: 12px;">
+            <button id="camera-settings-refresh" type="button">Load Current Settings</button>
+            <button id="camera-settings-apply-temp" type="button">Apply Temporary</button>
+            <button id="camera-settings-save-manual" type="button">Save Manual</button>
+          </div>
+          <div class="readable-panel" id="camera-control-readable">No camera control calls yet.</div>
+          <details class="raw-toggle">
+            <summary>Raw JSON</summary>
+            <pre id="camera-control-output">No camera control calls yet.</pre>
+          </details>
+        </article>
+      </section>
+
       <section class="panel hidden" id="system-tab">
         <div class="row">
           <article>
             <h3>Safe Config</h3>
-            <pre id="config">Loading...</pre>
+            <div class="readable-panel" id="config-readable">Loading translated config...</div>
+            <details class="raw-toggle" id="config-raw-toggle">
+              <summary>Code View</summary>
+              <pre id="config">Loading...</pre>
+            </details>
           </article>
           <article>
-            <h3>Latest Snapshot</h3>
-            <img id="snapshot" alt="Latest event snapshot" style="width: 100%; border: 1px solid var(--line); border-radius: 10px;" />
-            <p class="muted" id="snapshot-note">Waiting for first detection event...</p>
+            <h3>System Utilization</h3>
+            <div class="util-card">
+              <div class="util-row">
+                <div class="util-title">CPU</div>
+                <div class="util-value" id="system-cpu-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell">
+                <div class="util-bar-fill" id="system-cpu-bar"></div>
+              </div>
+            </div>
+            <div class="util-card" style="margin-top: 10px;">
+              <div class="util-row">
+                <div class="util-title">RAM</div>
+                <div class="util-value" id="system-ram-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell">
+                <div class="util-bar-fill" id="system-ram-bar"></div>
+              </div>
+            </div>
+            <div class="util-card" style="margin-top: 10px;">
+              <div class="util-row">
+                <div class="util-title">Storage</div>
+                <div class="util-value" id="system-storage-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell storage" id="system-storage-shell">
+                <div class="util-bar-fill" id="system-storage-bar"></div>
+                <div class="storage-segments" id="system-storage-segments"></div>
+              </div>
+              <div class="storage-legend" id="system-storage-legend"></div>
+            </div>
+            <div class="util-card server-control-card">
+              <div class="util-row">
+                <div class="util-title">Server Control</div>
+                <div class="util-value">Planned 5s countdown</div>
+              </div>
+              <div class="server-control-actions">
+                <button id="system-shutdown-btn" class="danger-btn" type="button">Shutdown Backend</button>
+                <button id="system-reboot-btn" class="danger-btn" type="button">Reboot Backend</button>
+              </div>
+              <div class="muted" id="system-server-control-note" style="margin-top: 8px;">No pending server action.</div>
+            </div>
           </article>
         </div>
       </section>
@@ -849,6 +1469,8 @@
       const MOBILE_LIVE_JPEG_QUALITY = 85;
       const liveMode = isMobileClient ? "mobile-snapshot" : "desktop-mjpeg";
       const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+      const SYSTEM_SERVER_ACTION_DELAY_SECONDS = 5;
+      const PAGE_SIZE = 24;
       const LOG_ERROR_PATTERN = /\b(error|exception|traceback|fatal|failed|critical)\b/i;
       let mobileLiveLoopRunning = false;
       let mobileLiveObjectUrl = null;
@@ -856,6 +1478,10 @@
       const logsTabBtn = document.querySelector('.tab-btn[data-tab="logs-tab"]');
       let latestEvents = [];
       let latestRecordings = [];
+      let eventsPagination = { limit: PAGE_SIZE, offset: 0, total: 0, page: 1, pages: 1, has_prev: false, has_next: false };
+      let recordingsPagination = { limit: PAGE_SIZE, offset: 0, total: 0, page: 1, pages: 1, has_prev: false, has_next: false };
+      let eventsFiltersState = { q: "", severity: "all", media: "all", range: "all" };
+      let recordingsFiltersState = { q: "", range: "all", sort: "newest" };
       let mediaItems = [];
       let selectedMediaKey = "";
       let logFiles = [];
@@ -864,6 +1490,20 @@
       let activeLogPane = "a";
       let logPaneAnimating = false;
       let logRequestToken = 0;
+      let currentCameraModeState = null;
+      let cameraSettingsValues = {};
+      let cameraSettingsInitialized = false;
+      let cameraSettingsSourceMode = "";
+      let currentCameraSettingsSpec = [];
+      let cameraReportedSettings = {};
+      let lastCameraAutomationStatus = null;
+      let cameraModeLastServerValue = "base";
+      let cameraModeSelectionDirty = false;
+      let cameraAutoScheduleDirty = false;
+      let cameraAutoScheduleServer = { config_enabled: false, day_start_hour: 7, night_start_hour: 19 };
+      let serverActionCountdownDeadlineMs = 0;
+      let serverActionCountdownTickerId = null;
+      let serverActionStateSignature = "";
 
       function isTouchClient() {
         return (
@@ -886,6 +1526,20 @@
         });
         if (tabId === "logs-tab") {
           refreshLogsPanel({ preserveCurrent: true, animate: false }).catch(console.error);
+        }
+        if (tabId === "events-tab") {
+          loadEvents().catch(console.error);
+        }
+        if (tabId === "recordings-tab") {
+          loadRecordings().catch(console.error);
+        }
+        if (tabId === "camera-tab") {
+          refreshCameraControlStatus().catch(console.error);
+          refreshCameraAutomationStatus({ quiet: true }).catch(console.error);
+          refreshCameraModeState({ quiet: true }).catch(console.error);
+        }
+        if (tabId === "system-tab") {
+          loadSystemUtilization().catch(console.error);
         }
       }
 
@@ -975,12 +1629,1339 @@
         const result = await fetch("/api/health");
         const json = await result.json();
         updateLiveTelemetry(json);
+        applyServerControlState(json?.server_control);
+      }
+
+      async function loadServerControlState(options = {}) {
+        const quiet = Boolean(options.quiet ?? true);
+        try {
+          const result = await fetch("/api/server/control");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `server control request failed (${result.status})`);
+          }
+          applyServerControlState(json);
+        } catch (error) {
+          if (!quiet) {
+            console.error(error);
+          }
+        }
       }
 
       async function loadConfig() {
         const result = await fetch("/api/config-safe");
         const json = await result.json();
         document.getElementById("config").textContent = JSON.stringify(json, null, 2);
+        renderSafeConfigReadable(json);
+        updateCameraControlReadinessFromSafeConfig(json);
+      }
+
+      function formatReadableValue(value) {
+        if (value === null || typeof value === "undefined") {
+          return "--";
+        }
+        if (typeof value === "boolean") {
+          return value ? "Yes" : "No";
+        }
+        if (typeof value === "number") {
+          return Number.isFinite(value) ? String(value) : "--";
+        }
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed || "--";
+        }
+        if (Array.isArray(value)) {
+          if (!value.length) {
+            return "None";
+          }
+          return value.map((entry) => String(entry)).join(", ");
+        }
+        if (typeof value === "object") {
+          return `${Object.keys(value).length} fields`;
+        }
+        return String(value);
+      }
+
+      function humanizeKeyPath(path) {
+        const raw = String(path || "").replace(/\./g, " / ").replace(/_/g, " ");
+        return raw
+          .split(" ")
+          .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ""))
+          .join(" ");
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function flattenReadableRows(value, prefix = "", depth = 0, maxDepth = 2, rows = []) {
+        if (value === null || typeof value === "undefined") {
+          if (prefix) {
+            rows.push({ key: prefix, value: "--" });
+          }
+          return rows;
+        }
+        if (typeof value !== "object") {
+          if (prefix) {
+            rows.push({ key: prefix, value: formatReadableValue(value) });
+          }
+          return rows;
+        }
+        if (Array.isArray(value)) {
+          if (!prefix) {
+            rows.push({ key: "Items", value: formatReadableValue(value) });
+            return rows;
+          }
+          rows.push({ key: prefix, value: formatReadableValue(value) });
+          return rows;
+        }
+        const keys = Object.keys(value);
+        if (!keys.length) {
+          if (prefix) {
+            rows.push({ key: prefix, value: "None" });
+          }
+          return rows;
+        }
+        for (const key of keys) {
+          const childPath = prefix ? `${prefix}.${key}` : key;
+          const childValue = value[key];
+          if (depth >= maxDepth || childValue === null || typeof childValue !== "object" || Array.isArray(childValue)) {
+            rows.push({ key: childPath, value: formatReadableValue(childValue) });
+            continue;
+          }
+          flattenReadableRows(childValue, childPath, depth + 1, maxDepth, rows);
+        }
+        return rows;
+      }
+
+      function renderReadablePanel(targetId, title, payload, options = {}) {
+        const node = document.getElementById(targetId);
+        if (!node) {
+          return;
+        }
+        const rows = flattenReadableRows(payload, "", 0, Number(options.maxDepth ?? 2), []);
+        if (!rows.length) {
+          node.innerHTML = `<div class="readable-title">${title}</div><div class="muted">No details available.</div>`;
+          return;
+        }
+        const body = rows
+          .map(
+            (row) =>
+              `<div class="kv-row"><div class="kv-key">${escapeHtml(humanizeKeyPath(row.key))}</div><div class="kv-value">${escapeHtml(row.value)}</div></div>`
+          )
+          .join("");
+        node.innerHTML = `<div class="readable-title">${escapeHtml(title)}</div><div class="kv-grid">${body}</div>`;
+      }
+
+      function renderSafeConfigReadable(configSafe) {
+        const readablePayload = {
+          camera: configSafe?.camera,
+          camera_control: configSafe?.camera_control,
+          detection: configSafe?.detection,
+          recording: configSafe?.recording,
+          ingest: configSafe?.ingest,
+          storage: configSafe?.storage,
+          alerts: configSafe?.alerts,
+          api: configSafe?.api,
+          auth: configSafe?.auth,
+        };
+        renderReadablePanel("config-readable", "Safe Config (Translated)", readablePayload, { maxDepth: 2 });
+      }
+
+      function updateCameraControlReadinessFromSafeConfig(configSafe) {
+        const panel = configSafe?.camera_control || {};
+        const enabled = Boolean(panel.enabled);
+        const baseUrl = String(panel.base_url || "").trim() || "--";
+        const tokenConfigured = Boolean(panel.token_configured);
+        const note = document.getElementById("camera-control-note");
+        note.textContent = enabled
+          ? `Camera control enabled at ${baseUrl} | token ${tokenConfigured ? "configured" : "missing"}`
+          : "Camera control disabled in runtime config.";
+        const profileAutomation = panel?.profile_automation;
+        if (profileAutomation && typeof profileAutomation === "object") {
+          applyCameraAutomationSchedule(profileAutomation, { keepEdits: true });
+        }
+      }
+
+      function setCameraControlOutput(title, payload) {
+        const node = document.getElementById("camera-control-output");
+        node.textContent = `${title}\n${JSON.stringify(payload, null, 2)}`;
+        renderReadablePanel("camera-control-readable", title, payload, { maxDepth: 2 });
+      }
+
+      function scrollCameraOutputIntoView() {
+        const node = document.getElementById("camera-control-readable");
+        if (!node) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          node.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+
+      function setCameraActiveProfileLabel(value) {
+        const node = document.getElementById("camera-active-profile");
+        const text = String(value || "").trim();
+        node.textContent = `Active Profile: ${text || "--"}`;
+      }
+
+      function setCameraAutomationStateLabel(value) {
+        const node = document.getElementById("camera-auto-state");
+        const text = String(value || "").trim();
+        node.textContent = `Automation: ${text || "--"}`;
+      }
+
+      function clampHour(value, fallback = 0) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          return fallback;
+        }
+        return Math.max(0, Math.min(23, Math.floor(parsed)));
+      }
+
+      function formatHourLabel(hourValue) {
+        const hour = clampHour(hourValue, 0);
+        return `${String(hour).padStart(2, "0")}:00`;
+      }
+
+      function normalizeAutomationSchedulePayload(payload) {
+        const source = payload && typeof payload === "object" ? payload : {};
+        const nestedAutomation =
+          source.automation && typeof source.automation === "object" ? source.automation : {};
+        const dayStartRaw =
+          nestedAutomation.day_start_hour ?? source.day_start_hour ?? cameraAutoScheduleServer.day_start_hour;
+        const nightStartRaw =
+          nestedAutomation.night_start_hour ?? source.night_start_hour ?? cameraAutoScheduleServer.night_start_hour;
+        return {
+          config_enabled: Boolean(source.config_enabled ?? source.enabled ?? cameraAutoScheduleServer.config_enabled),
+          day_start_hour: clampHour(dayStartRaw, cameraAutoScheduleServer.day_start_hour),
+          night_start_hour: clampHour(nightStartRaw, cameraAutoScheduleServer.night_start_hour),
+        };
+      }
+
+      function automationConfigSummaryText(schedule) {
+        const configEnabled = Boolean(schedule?.config_enabled);
+        const dayStart = formatHourLabel(schedule?.day_start_hour ?? 7);
+        const nightStart = formatHourLabel(schedule?.night_start_hour ?? 19);
+        return `Config ${configEnabled ? "enabled" : "disabled"} | day ${dayStart}, night ${nightStart}`;
+      }
+
+      function setCameraAutoConfigPopoverOpen(open) {
+        const anchor = document.getElementById("camera-auto-config-anchor");
+        const button = document.getElementById("camera-auto-config-toggle");
+        if (!anchor || !button) {
+          return;
+        }
+        const isOpen = Boolean(open);
+        anchor.classList.toggle("open", isOpen);
+        button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      }
+
+      function setCameraAutomationConfigSummary(text) {
+        const summary = String(text || "").trim() || "Config: --";
+        const popover = document.getElementById("camera-auto-config-popover");
+        const mobile = document.getElementById("camera-auto-config-mobile");
+        if (popover) {
+          popover.textContent = summary;
+        }
+        if (mobile) {
+          mobile.textContent = summary;
+        }
+      }
+
+      function applyCameraAutomationSchedule(payload, options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const schedule = normalizeAutomationSchedulePayload(payload);
+        cameraAutoScheduleServer = schedule;
+        setCameraAutomationConfigSummary(automationConfigSummaryText(schedule));
+
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const shouldHydrateInputs = !keepEdits || !cameraAutoScheduleDirty;
+        if (!shouldHydrateInputs) {
+          return;
+        }
+        daySelect.value = String(schedule.day_start_hour);
+        nightSelect.value = String(schedule.night_start_hour);
+        cameraAutoScheduleDirty = false;
+      }
+
+      function buildAutomationScheduleHourOptions() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        if (daySelect.options.length && nightSelect.options.length) {
+          return;
+        }
+        const options = [];
+        for (let hour = 0; hour < 24; hour += 1) {
+          const option = document.createElement("option");
+          option.value = String(hour);
+          option.textContent = formatHourLabel(hour);
+          options.push(option);
+        }
+        daySelect.innerHTML = "";
+        nightSelect.innerHTML = "";
+        options.forEach((option) => {
+          daySelect.appendChild(option.cloneNode(true));
+          nightSelect.appendChild(option.cloneNode(true));
+        });
+      }
+
+      function markCameraAutoScheduleDirty() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const dayValue = clampHour(daySelect.value, cameraAutoScheduleServer.day_start_hour);
+        const nightValue = clampHour(nightSelect.value, cameraAutoScheduleServer.night_start_hour);
+        cameraAutoScheduleDirty =
+          dayValue !== cameraAutoScheduleServer.day_start_hour ||
+          nightValue !== cameraAutoScheduleServer.night_start_hour;
+      }
+
+      function renderCameraModeHelp() {
+        const node = document.getElementById("camera-mode-help");
+        if (!node) {
+          return;
+        }
+        const activeMode = String(currentCameraModeState?.active_mode || "");
+        const effectiveEnabled = Boolean(lastCameraAutomationStatus?.effective_enabled);
+        if (activeMode === "auto_day_night_profile") {
+          node.textContent = effectiveEnabled
+            ? "Auto mode + automation ON: scheduler owns day/night profile switching."
+            : "Auto mode selected, automation OFF: current profile is held until automation is enabled or a profile is applied manually.";
+          return;
+        }
+        node.textContent =
+          "Manual/base/adaptive modes own camera settings directly. Auto Day/Night buttons only control the scheduler.";
+      }
+
+      async function reconcileCameraSyncNow(options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        try {
+          const response = await fetch("/api/camera-control/sync/reconcile-now", { method: "POST" });
+          const json = await parseJsonResponse(response);
+          if (!response.ok) {
+            return null;
+          }
+          applyModeStatePayload(json, { keepEdits });
+          return json;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      async function reconcileAndRefreshModeState(options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        await reconcileCameraSyncNow({ keepEdits });
+        await refreshCameraModeState({ quiet: true, keepEdits }).catch(console.error);
+      }
+
+      function extractCameraProfile(statusPayload) {
+        const profile = statusPayload?.status?.payload?.active_profile;
+        return String(profile || "").trim();
+      }
+
+      async function refreshCameraControlStatus(options = {}) {
+        const quiet = Boolean(options.quiet);
+        const reconcileSync = Boolean(options.reconcileSync);
+        const scrollToOutput = Boolean(options.scrollToOutput);
+        try {
+          const result = await fetch("/api/camera-control/status");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `camera status request failed (${result.status})`);
+          }
+          const profile = extractCameraProfile(json);
+          if (profile) {
+            setCameraActiveProfileLabel(profile);
+          }
+          if (!quiet) {
+            setCameraControlOutput("Camera Status", json);
+          }
+          if (reconcileSync) {
+            await reconcileAndRefreshModeState({ keepEdits: true });
+          }
+          if (scrollToOutput) {
+            scrollCameraOutputIntoView();
+          }
+        } catch (error) {
+          if (!quiet) {
+            setCameraControlOutput("Camera Status Error", { error: String(error) });
+            if (scrollToOutput) {
+              scrollCameraOutputIntoView();
+            }
+          }
+        }
+      }
+
+      async function refreshCameraAutomationStatus(options = {}) {
+        const quiet = Boolean(options.quiet);
+        try {
+          const result = await fetch("/api/camera-control/automation");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `camera automation request failed (${result.status})`);
+          }
+          lastCameraAutomationStatus = json;
+          const effectiveEnabled = Boolean(json.effective_enabled);
+          const override = json.runtime_enabled_override;
+          const desired = String(json.last_desired_profile || "--");
+          const active = String(json.last_camera_profile || "--");
+          const modeText =
+            override === null || typeof override === "undefined"
+              ? `config mode (${effectiveEnabled ? "on" : "off"})`
+              : `runtime override ${effectiveEnabled ? "on" : "off"}`;
+          setCameraAutomationStateLabel(`${modeText} | desired ${desired} | active ${active}`);
+          applyCameraAutomationSchedule(json, { keepEdits: true });
+          renderCameraModeHelp();
+          if (!quiet) {
+            setCameraControlOutput("Camera Automation Status", json);
+          }
+        } catch (error) {
+          lastCameraAutomationStatus = null;
+          setCameraAutomationStateLabel("unavailable");
+          renderCameraModeHelp();
+          if (!quiet) {
+            setCameraControlOutput("Camera Automation Error", { error: String(error) });
+          }
+        }
+      }
+
+      async function setCameraAutomationEnabled(enabled) {
+        const result = await fetch(`/api/camera-control/automation?enabled=${enabled ? "true" : "false"}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput(`Camera Automation ${enabled ? "Enabled" : "Disabled"}`, json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+      }
+
+      async function setCameraAutomationUseConfig() {
+        const result = await fetch("/api/camera-control/automation/use-config", { method: "POST" });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput("Camera Automation Using Config Default", json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+      }
+
+      async function saveCameraAutomationSchedule() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const dayStartHour = clampHour(daySelect.value, cameraAutoScheduleServer.day_start_hour);
+        const nightStartHour = clampHour(nightSelect.value, cameraAutoScheduleServer.night_start_hour);
+        const response = await fetch(
+          `/api/camera-control/automation/schedule?day_start_hour=${dayStartHour}&night_start_hour=${nightStartHour}`,
+          { method: "POST" }
+        );
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Camera Automation Schedule Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        cameraAutoScheduleDirty = false;
+        if (json?.status) {
+          applyCameraAutomationSchedule(json.status, { keepEdits: false });
+        }
+        setCameraControlOutput("Camera Automation Schedule Updated", json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function runCameraHealthCheck() {
+        try {
+          const result = await fetch("/api/camera-control/health");
+          const json = await parseJsonResponse(result);
+          setCameraControlOutput("Camera Health", json);
+          await reconcileAndRefreshModeState({ keepEdits: true });
+          scrollCameraOutputIntoView();
+        } catch (error) {
+          setCameraControlOutput("Camera Health Error", { error: String(error) });
+          scrollCameraOutputIntoView();
+        }
+      }
+
+      async function applyCameraProfile() {
+        const name = String(document.getElementById("camera-profile-name").value || "base").trim();
+        const result = await fetch(`/api/camera-control/profile?name=${encodeURIComponent(name)}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput(`Apply Profile (Quick Test: ${name})`, {
+          ...json,
+          quick_test_only: true,
+          note: "Temporary manual test action. Canonical mode policy is not changed.",
+        });
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function enforceModePolicyAfterReboot() {
+        await refreshCameraAutomationStatus({ quiet: true });
+        await refreshCameraModeState({ quiet: true, keepEdits: true });
+        const activeMode = String(currentCameraModeState?.active_mode || "base").trim();
+        const autoPaused =
+          activeMode === "auto_day_night_profile" && !Boolean(lastCameraAutomationStatus?.effective_enabled);
+        if (autoPaused) {
+          return { ok: true, skipped: true, reason: "auto_mode_paused" };
+        }
+        const response = await fetch("/api/camera-control/sync/reapply-canonical", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (response.ok) {
+          applyModeStatePayload(json, { keepEdits: true });
+          return { ok: true, skipped: false };
+        }
+        return { ok: false, skipped: false, detail: json };
+      }
+
+      async function rebootCamera() {
+        const delayNode = document.getElementById("camera-reboot-delay-ms");
+        const parsed = Number(delayNode.value || "250");
+        const delayMs = Number.isFinite(parsed) ? Math.max(100, Math.min(10000, Math.floor(parsed))) : 250;
+        delayNode.value = String(delayMs);
+        const ok = window.confirm(`Reboot camera now with ${delayMs} ms delay?`);
+        if (!ok) {
+          return;
+        }
+        const result = await fetch(`/api/camera-control/reboot?delay_ms=${delayMs}`, { method: "POST" });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput("Camera Reboot", json);
+        scrollCameraOutputIntoView();
+        setTimeout(() => {
+          (async () => {
+            await refreshCameraControlStatus({ quiet: false, reconcileSync: true, scrollToOutput: true });
+            const policy = await enforceModePolicyAfterReboot();
+            if (!policy.ok) {
+              setCameraControlOutput("Post-Reboot Mode Policy Error", policy.detail || { error: "unknown_error" });
+              scrollCameraOutputIntoView();
+            }
+          })().catch(console.error);
+        }, 1500);
+      }
+
+      function wireCameraControlPanel() {
+        buildAutomationScheduleHourOptions();
+        applyCameraAutomationSchedule(cameraAutoScheduleServer, { keepEdits: false });
+        const modeSelect = cameraModeSelectNode();
+        if (modeSelect) {
+          modeSelect.addEventListener("change", () => {
+            markCameraModeSelectionDirty();
+          });
+        }
+        const dayHourSelect = document.getElementById("camera-auto-day-hour");
+        const nightHourSelect = document.getElementById("camera-auto-night-hour");
+        if (dayHourSelect) {
+          dayHourSelect.addEventListener("change", () => {
+            markCameraAutoScheduleDirty();
+          });
+        }
+        if (nightHourSelect) {
+          nightHourSelect.addEventListener("change", () => {
+            markCameraAutoScheduleDirty();
+          });
+        }
+        const configToggle = document.getElementById("camera-auto-config-toggle");
+        if (configToggle) {
+          configToggle.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const anchor = document.getElementById("camera-auto-config-anchor");
+            const isOpen = Boolean(anchor?.classList.contains("open"));
+            setCameraAutoConfigPopoverOpen(!isOpen);
+          });
+        }
+        document.addEventListener("click", (event) => {
+          const anchor = document.getElementById("camera-auto-config-anchor");
+          if (!anchor) {
+            return;
+          }
+          if (!anchor.contains(event.target)) {
+            setCameraAutoConfigPopoverOpen(false);
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            setCameraAutoConfigPopoverOpen(false);
+          }
+        });
+        document.getElementById("camera-status-refresh").addEventListener("click", () => {
+          refreshCameraControlStatus({ quiet: false, reconcileSync: true, scrollToOutput: true }).catch(console.error);
+        });
+        document.getElementById("camera-health-check").addEventListener("click", () => {
+          runCameraHealthCheck().catch(console.error);
+        });
+        document.getElementById("camera-profile-apply").addEventListener("click", () => {
+          applyCameraProfile().catch(console.error);
+        });
+        document.getElementById("camera-reboot-btn").addEventListener("click", () => {
+          rebootCamera().catch(console.error);
+        });
+        document.getElementById("camera-auto-enable").addEventListener("click", () => {
+          setCameraAutomationEnabled(true).catch(console.error);
+        });
+        document.getElementById("camera-auto-disable").addEventListener("click", () => {
+          setCameraAutomationEnabled(false).catch(console.error);
+        });
+        document.getElementById("camera-auto-config").addEventListener("click", () => {
+          setCameraAutomationUseConfig().catch(console.error);
+        });
+        document.getElementById("camera-auto-schedule-save").addEventListener("click", () => {
+          saveCameraAutomationSchedule().catch(console.error);
+        });
+        document.getElementById("camera-mode-apply").addEventListener("click", () => {
+          setCameraMode().catch(console.error);
+        });
+        document.getElementById("camera-sync-adopt").addEventListener("click", () => {
+          adoptCurrentCameraState().catch(console.error);
+        });
+        document.getElementById("camera-sync-reapply").addEventListener("click", () => {
+          reapplyCanonicalCameraPolicy().catch(console.error);
+        });
+        document.getElementById("camera-settings-refresh").addEventListener("click", () => {
+          (async () => {
+            await reconcileAndRefreshModeState({ keepEdits: false });
+            await refreshCameraModeState({ quiet: false, keepEdits: false });
+            scrollCameraOutputIntoView();
+          })().catch(console.error);
+        });
+        document.getElementById("camera-settings-apply-temp").addEventListener("click", () => {
+          applyTemporaryCameraSettings().catch(console.error);
+        });
+        document.getElementById("camera-settings-save-manual").addEventListener("click", () => {
+          saveManualCameraSettings().catch(console.error);
+        });
+      }
+
+      function clampPercent(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          return 0;
+        }
+        return Math.max(0, Math.min(100, n));
+      }
+
+      function formatBytes(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) {
+          return "--";
+        }
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let size = n;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        const fixed = size >= 100 ? size.toFixed(0) : size.toFixed(1);
+        return `${fixed} ${units[unitIndex]}`;
+      }
+
+      function normalizeSettingValue(spec, rawValue) {
+        const kind = String(spec?.kind || "").trim();
+        if (kind === "toggle") {
+          return Number(rawValue) ? 1 : 0;
+        }
+        if (kind === "select") {
+          const allowed = Array.isArray(spec?.values)
+            ? spec.values.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+            : [];
+          const fallback = allowed.length ? allowed[0] : 0;
+          const parsed = Number(rawValue);
+          if (!Number.isFinite(parsed)) {
+            return fallback;
+          }
+          return allowed.includes(parsed) ? parsed : fallback;
+        }
+        const min = Number(spec?.min ?? 0);
+        const max = Number(spec?.max ?? 100);
+        const step = Number(spec?.step ?? 1);
+        let parsed = Number(rawValue);
+        if (!Number.isFinite(parsed)) {
+          parsed = min;
+        }
+        parsed = Math.max(min, Math.min(max, parsed));
+        if (Number.isFinite(step) && step > 0) {
+          parsed = Math.round((parsed - min) / step) * step + min;
+        }
+        return Math.round(parsed);
+      }
+
+      function cameraSettingDisplayValue(spec, value) {
+        if (String(spec?.kind || "") === "toggle") {
+          return Number(value) ? "On" : "Off";
+        }
+        return String(value);
+      }
+
+      function settingValueNodeId(key) {
+        return `camera-setting-value-${key}`;
+      }
+
+      function setBadgeState(nodeId, text, tone = "") {
+        const node = document.getElementById(nodeId);
+        if (!node) {
+          return;
+        }
+        node.textContent = text;
+        node.classList.remove("ok", "warn", "danger");
+        if (tone) {
+          node.classList.add(tone);
+        }
+      }
+
+      function setSystemServerControlNote(text) {
+        const node = document.getElementById("system-server-control-note");
+        if (!node) {
+          return;
+        }
+        node.textContent = String(text || "").trim() || "No pending server action.";
+      }
+
+      function setSystemServerControlButtonsDisabled(disabled) {
+        const shutdownBtn = document.getElementById("system-shutdown-btn");
+        const rebootBtn = document.getElementById("system-reboot-btn");
+        if (shutdownBtn) {
+          shutdownBtn.disabled = Boolean(disabled);
+        }
+        if (rebootBtn) {
+          rebootBtn.disabled = Boolean(disabled);
+        }
+      }
+
+      function clearServerActionTicker() {
+        if (serverActionCountdownTickerId !== null) {
+          window.clearInterval(serverActionCountdownTickerId);
+          serverActionCountdownTickerId = null;
+        }
+      }
+
+      function updateServerActionCountdown() {
+        const countdownNode = document.getElementById("server-action-countdown");
+        if (!countdownNode) {
+          return;
+        }
+        const remainingMs = Math.max(0, serverActionCountdownDeadlineMs - Date.now());
+        countdownNode.textContent = `${(remainingMs / 1000).toFixed(1)}s`;
+      }
+
+      function showServerActionBanner(action, executeAtUtc) {
+        const banner = document.getElementById("server-action-banner");
+        const textNode = document.getElementById("server-action-text");
+        if (!banner || !textNode) {
+          return;
+        }
+        const normalizedAction = String(action || "shutdown").trim().toLowerCase();
+        textNode.textContent = normalizedAction === "reboot" ? "Server rebooting" : "Server shutting down";
+
+        const parsedDeadline = Date.parse(String(executeAtUtc || ""));
+        serverActionCountdownDeadlineMs = Number.isFinite(parsedDeadline)
+          ? parsedDeadline
+          : Date.now() + 5000;
+        updateServerActionCountdown();
+        clearServerActionTicker();
+        serverActionCountdownTickerId = window.setInterval(updateServerActionCountdown, 100);
+        banner.classList.add("show");
+      }
+
+      function hideServerActionBanner() {
+        const banner = document.getElementById("server-action-banner");
+        if (!banner) {
+          return;
+        }
+        banner.classList.remove("show");
+        clearServerActionTicker();
+        serverActionStateSignature = "";
+      }
+
+      function applyServerControlState(state) {
+        const payload = state && typeof state === "object" ? state : {};
+        const pending = Boolean(payload.pending);
+        if (!pending) {
+          hideServerActionBanner();
+          setSystemServerControlButtonsDisabled(false);
+          setSystemServerControlNote("No pending server action.");
+          return;
+        }
+        setSystemServerControlButtonsDisabled(true);
+        const action = String(payload.action || "shutdown").trim().toLowerCase();
+        const executeAtUtc = String(payload.execute_at_utc || "");
+        const remainingSeconds = Number(payload.remaining_seconds);
+        const remainingLabel = Number.isFinite(remainingSeconds) ? `${remainingSeconds.toFixed(1)}s` : "--";
+        const actionLabel = action === "reboot" ? "Reboot" : "Shutdown";
+        setSystemServerControlNote(`${actionLabel} scheduled. Countdown ${remainingLabel}.`);
+        const signature = `${action}|${executeAtUtc}`;
+        if (signature !== serverActionStateSignature) {
+          serverActionStateSignature = signature;
+          showServerActionBanner(action, executeAtUtc);
+          return;
+        }
+        const parsedDeadline = Date.parse(executeAtUtc);
+        if (Number.isFinite(parsedDeadline)) {
+          serverActionCountdownDeadlineMs = parsedDeadline;
+        }
+      }
+
+      async function scheduleSystemServerAction(action) {
+        const selected = String(action || "").trim().toLowerCase() === "reboot" ? "reboot" : "shutdown";
+        const label = selected === "reboot" ? "reboot" : "shutdown";
+        const confirmed = window.confirm(
+          `Confirm backend ${label}? It will execute in ${SYSTEM_SERVER_ACTION_DELAY_SECONDS} seconds.`
+        );
+        if (!confirmed) {
+          return;
+        }
+        try {
+          const result = await fetch(
+            `/api/server/control?action=${selected}&delay_seconds=${SYSTEM_SERVER_ACTION_DELAY_SECONDS}`,
+            { method: "POST" }
+          );
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `server control request failed (${result.status})`);
+          }
+          applyServerControlState(json?.state);
+        } catch (error) {
+          setSystemServerControlNote(`Server control request failed: ${String(error)}`);
+          setSystemServerControlButtonsDisabled(false);
+        }
+      }
+
+      function modeDisplayName(mode) {
+        const text = String(mode || "").trim();
+        if (!text) {
+          return "--";
+        }
+        return text.replace(/_/g, " ");
+      }
+
+      function toneForSyncStatus(syncStatus) {
+        const value = String(syncStatus || "").trim();
+        if (value === "in_sync") {
+          return "ok";
+        }
+        if (value === "reapplying") {
+          return "warn";
+        }
+        if (value === "drift_detected" || value === "camera_unavailable") {
+          return "danger";
+        }
+        return "";
+      }
+
+      function syncLabelForStatus(syncStatus) {
+        const value = String(syncStatus || "").trim();
+        if (value === "in_sync") {
+          return "Sync: In Sync";
+        }
+        if (value === "drift_detected") {
+          return "Sync: D-Sync";
+        }
+        if (value === "reapplying") {
+          return "Sync: Reapplying";
+        }
+        if (value === "camera_unavailable") {
+          return "Sync: Camera Unavailable";
+        }
+        return `Sync: ${value || "--"}`;
+      }
+
+      function updateCameraModeBadges(modeState) {
+        const syncStatus = String(modeState?.sync_status || "unknown");
+        const activeMode = String(modeState?.active_mode || "--");
+        setBadgeState("camera-sync-badge", syncLabelForStatus(syncStatus), toneForSyncStatus(syncStatus));
+        setBadgeState("camera-mode-badge", `Mode: ${modeDisplayName(activeMode)}`);
+      }
+
+      function cameraModeSelectNode() {
+        return document.getElementById("camera-mode-name");
+      }
+
+      function markCameraModeSelectionDirty() {
+        const node = cameraModeSelectNode();
+        if (!node) {
+          return;
+        }
+        const selected = String(node.value || "base").trim();
+        cameraModeSelectionDirty = selected !== String(cameraModeLastServerValue || "base").trim();
+      }
+
+      function deriveCanonicalModeSettings(modeState) {
+        const modes = modeState?.canonical_state?.modes || {};
+        const activeMode = String(modeState?.active_mode || "base");
+        const modeSlot = modes?.[activeMode] || {};
+        return modeSlot?.settings && typeof modeSlot.settings === "object" ? modeSlot.settings : {};
+      }
+
+      function syncCameraSettingsFromModeState(modeState, options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const spec = Array.isArray(modeState?.settings_spec) ? modeState.settings_spec : [];
+        const activeMode = String(modeState?.active_mode || "base");
+        const fromCanonical = deriveCanonicalModeSettings(modeState);
+        const next = {};
+        for (const item of spec) {
+          const key = String(item?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          const currentCandidate = keepEdits && cameraSettingsInitialized ? cameraSettingsValues[key] : undefined;
+          const sourceCandidate =
+            typeof fromCanonical[key] !== "undefined"
+              ? fromCanonical[key]
+              : typeof currentCandidate !== "undefined"
+                ? currentCandidate
+                : item?.values?.[0] ?? item?.min ?? 0;
+          next[key] = normalizeSettingValue(item, sourceCandidate);
+        }
+        const shouldResetEditor =
+          !cameraSettingsInitialized || !keepEdits || activeMode !== cameraSettingsSourceMode;
+        if (shouldResetEditor) {
+          cameraSettingsValues = next;
+          cameraSettingsInitialized = true;
+        } else {
+          for (const [key, value] of Object.entries(next)) {
+            if (typeof cameraSettingsValues[key] === "undefined") {
+              cameraSettingsValues[key] = value;
+            }
+          }
+        }
+        cameraSettingsSourceMode = activeMode;
+      }
+
+      function renderCameraSettingsGrid(specList) {
+        const grid = document.getElementById("camera-settings-grid");
+        grid.innerHTML = "";
+        if (!Array.isArray(specList) || !specList.length) {
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No curated settings available.";
+          grid.appendChild(empty);
+          return;
+        }
+        for (const spec of specList) {
+          const key = String(spec?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          const card = document.createElement("div");
+          card.className = "setting-card";
+          const label = document.createElement("div");
+          label.className = "setting-label";
+          label.textContent = String(spec?.label || key);
+          const valueNode = document.createElement("div");
+          valueNode.className = "setting-value";
+          valueNode.id = settingValueNodeId(key);
+          const reportedNode = document.createElement("div");
+          reportedNode.className = "setting-reported";
+
+          const normalized = normalizeSettingValue(spec, cameraSettingsValues[key]);
+          cameraSettingsValues[key] = normalized;
+          valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, normalized)}`;
+          if (Object.prototype.hasOwnProperty.call(cameraReportedSettings, key)) {
+            reportedNode.textContent = `Reported: ${cameraSettingDisplayValue(spec, cameraReportedSettings[key])}`;
+          } else {
+            reportedNode.textContent = "Reported: Not reported";
+          }
+
+          card.appendChild(label);
+          card.appendChild(valueNode);
+          card.appendChild(reportedNode);
+
+          const kind = String(spec?.kind || "").trim();
+          if (kind === "toggle") {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "setting-control";
+            button.textContent = Number(normalized) ? "On" : "Off";
+            button.addEventListener("click", () => {
+              const nextValue = Number(cameraSettingsValues[key]) ? 0 : 1;
+              cameraSettingsValues[key] = nextValue;
+              button.textContent = nextValue ? "On" : "Off";
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(button);
+          } else if (kind === "select") {
+            const select = document.createElement("select");
+            select.className = "setting-control";
+            const values = Array.isArray(spec?.values) ? spec.values : [];
+            values.forEach((raw) => {
+              const optionValue = Number(raw);
+              const option = document.createElement("option");
+              option.value = String(optionValue);
+              option.textContent = String(optionValue);
+              if (optionValue === Number(normalized)) {
+                option.selected = true;
+              }
+              select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+              const nextValue = normalizeSettingValue(spec, Number(select.value));
+              cameraSettingsValues[key] = nextValue;
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(select);
+          } else {
+            const range = document.createElement("input");
+            range.type = "range";
+            range.className = "setting-control";
+            range.min = String(spec?.min ?? 0);
+            range.max = String(spec?.max ?? 100);
+            range.step = String(spec?.step ?? 1);
+            range.value = String(normalized);
+            range.addEventListener("input", () => {
+              const nextValue = normalizeSettingValue(spec, Number(range.value));
+              cameraSettingsValues[key] = nextValue;
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(range);
+          }
+          grid.appendChild(card);
+        }
+      }
+
+      function cameraSettingsPayload() {
+        const payload = {};
+        for (const spec of currentCameraSettingsSpec) {
+          const key = String(spec?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          payload[key] = normalizeSettingValue(spec, cameraSettingsValues[key]);
+        }
+        return payload;
+      }
+
+      async function parseJsonResponse(response) {
+        try {
+          return await response.json();
+        } catch (error) {
+          return { ok: false, error: String(error) };
+        }
+      }
+
+      function applyModeStatePayload(payload, options = {}) {
+        currentCameraModeState = payload;
+        currentCameraSettingsSpec = Array.isArray(payload?.settings_spec) ? payload.settings_spec : [];
+        cameraReportedSettings =
+          payload?.last_camera_status?.controls && typeof payload.last_camera_status.controls === "object"
+            ? payload.last_camera_status.controls
+            : {};
+        syncCameraSettingsFromModeState(payload, { keepEdits: Boolean(options.keepEdits ?? true) });
+        renderCameraSettingsGrid(currentCameraSettingsSpec);
+        updateCameraModeBadges(payload);
+        const serverMode = String(payload?.active_mode || "base");
+        cameraModeLastServerValue = serverMode;
+        const modeSelect = cameraModeSelectNode();
+        if (modeSelect) {
+          const selectedNow = String(modeSelect.value || "base").trim();
+          const hasPendingUserSelection = selectedNow !== serverMode;
+          if (!hasPendingUserSelection) {
+            modeSelect.value = serverMode;
+            cameraModeSelectionDirty = false;
+          } else {
+            cameraModeSelectionDirty = true;
+          }
+        }
+        const statusProfile = String(payload?.last_camera_status?.active_profile || "").trim();
+        if (statusProfile) {
+          setCameraActiveProfileLabel(statusProfile);
+        }
+        const controlPanel = payload?.camera_control || {};
+        const baseUrl = String(controlPanel?.base_url || "--");
+        const enabled = Boolean(controlPanel?.enabled);
+        const tokenConfigured = Boolean(controlPanel?.token_configured);
+        document.getElementById("camera-control-note").textContent = enabled
+          ? `Camera control enabled at ${baseUrl} | token ${tokenConfigured ? "configured" : "missing"}`
+          : "Camera control disabled in runtime config.";
+        renderCameraModeHelp();
+        document.getElementById("camera-mode-state-output").textContent = JSON.stringify(payload, null, 2);
+        renderReadablePanel(
+          "camera-mode-state-readable",
+          "Mode Engine State",
+          {
+            active_mode: payload?.active_mode,
+            sync_status: payload?.sync_status,
+            drift_detail: payload?.drift_detail,
+            last_reconcile_action: payload?.last_reconcile_action,
+            effective_owners: payload?.effective_owners,
+            last_error: payload?.last_error,
+            last_camera_status: payload?.last_camera_status,
+          },
+          { maxDepth: 2 }
+        );
+      }
+
+      async function refreshCameraModeState(options = {}) {
+        const quiet = Boolean(options.quiet);
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        try {
+          const result = await fetch("/api/camera-control/mode-state");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `mode-state request failed (${result.status})`);
+          }
+          applyModeStatePayload(json, { keepEdits });
+          if (!quiet) {
+            setCameraControlOutput("Mode State Refreshed", json);
+          }
+        } catch (error) {
+          if (!quiet) {
+            setCameraControlOutput("Mode State Error", { error: String(error) });
+          }
+        }
+      }
+
+      async function setCameraMode() {
+        const modeName = String(document.getElementById("camera-mode-name").value || "base").trim();
+        const response = await fetch(`/api/camera-control/mode?name=${encodeURIComponent(modeName)}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Set Camera Mode Error", json);
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput(`Camera Mode Set (${modeName})`, {
+          ...json,
+          note: "Active mode policy now owns camera behavior. Quick manual profile tests are treated as temporary.",
+        });
+        await refreshCameraAutomationStatus({ quiet: true });
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function adoptCurrentCameraState() {
+        const response = await fetch("/api/camera-control/sync/adopt-current", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Adopt Current State Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Adopt Current Camera State", json);
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function reapplyCanonicalCameraPolicy() {
+        const response = await fetch("/api/camera-control/sync/reapply-canonical", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Reapply Canonical Policy Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Reapply Canonical Policy", json);
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function applyTemporaryCameraSettings() {
+        const settings = cameraSettingsPayload();
+        const response = await fetch("/api/camera-control/settings/apply-temporary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Apply Temporary Settings Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Apply Temporary Settings", json);
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function saveManualCameraSettings() {
+        const settings = cameraSettingsPayload();
+        const response = await fetch("/api/camera-control/settings/save-manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Save Manual Settings Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Save Manual Settings", json);
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      function setUtilizationBar(fillNodeId, percent) {
+        const node = document.getElementById(fillNodeId);
+        if (!node) {
+          return;
+        }
+        node.style.width = `${clampPercent(percent).toFixed(1)}%`;
+      }
+
+      function renderStorageBreakdown(payload) {
+        const segmentsNode = document.getElementById("system-storage-segments");
+        const legendNode = document.getElementById("system-storage-legend");
+        segmentsNode.innerHTML = "";
+        legendNode.innerHTML = "";
+
+        const segments = Array.isArray(payload?.storage_breakdown?.segments)
+          ? payload.storage_breakdown.segments
+          : [];
+        const usedBytes = Number(payload?.drive?.used_bytes ?? payload?.storage_breakdown?.used_bytes ?? 0);
+        const totalBytes = Number(payload?.drive?.total_bytes ?? payload?.storage_breakdown?.total_bytes ?? 0);
+        const usedPercent = clampPercent(payload?.drive?.percent);
+        segmentsNode.style.width = `${usedPercent.toFixed(1)}%`;
+        const storageShell = document.getElementById("system-storage-shell");
+        const shellWidthPx = Number(storageShell?.clientWidth ?? 0);
+        const usedWidthPx = shellWidthPx > 0 ? (shellWidthPx * usedPercent) / 100 : 0;
+        const colorByKey = {
+          logs: "#60a5fa",
+          captures: "#22c55e",
+          videos: "#f59e0b",
+          events_db: "#ef4444",
+          misc: "#6b7280",
+        };
+
+        const rawPercents = segments.map((segment) => {
+          const bytes = Number(segment?.bytes ?? 0);
+          return usedBytes > 0 ? (bytes / usedBytes) * 100 : 0;
+        });
+        const adjustedPercents = rawPercents.slice();
+        const minSlicePercent =
+          usedWidthPx > 0 ? Math.min(14, (2 / usedWidthPx) * 100) : 2.0;
+        const positiveIndexes = adjustedPercents
+          .map((value, index) => ({ value, index, bytes: Number(segments[index]?.bytes ?? 0) }))
+          .filter((entry) => entry.bytes > 0 && entry.value > 0)
+          .map((entry) => entry.index);
+
+        let addedPercent = 0;
+        for (const index of positiveIndexes) {
+          if (adjustedPercents[index] < minSlicePercent) {
+            addedPercent += minSlicePercent - adjustedPercents[index];
+            adjustedPercents[index] = minSlicePercent;
+          }
+        }
+        if (addedPercent > 0 && positiveIndexes.length) {
+          const shrinkOrder = positiveIndexes
+            .slice()
+            .sort((left, right) => adjustedPercents[right] - adjustedPercents[left]);
+          for (const index of shrinkOrder) {
+            if (addedPercent <= 0) {
+              break;
+            }
+            const available = Math.max(0, adjustedPercents[index] - minSlicePercent);
+            if (available <= 0) {
+              continue;
+            }
+            const shrinkBy = Math.min(available, addedPercent);
+            adjustedPercents[index] -= shrinkBy;
+            addedPercent -= shrinkBy;
+          }
+        }
+        const adjustedTotal = adjustedPercents.reduce((sum, value) => sum + Math.max(0, value), 0);
+        const normalizedPercents =
+          adjustedTotal > 0 ? adjustedPercents.map((value) => (Math.max(0, value) / adjustedTotal) * 100) : adjustedPercents;
+
+        for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+          const segment = segments[segmentIndex];
+          const bytes = Number(segment?.bytes ?? 0);
+          const widthPct = Number(normalizedPercents[segmentIndex] ?? 0);
+          const color = String(colorByKey[String(segment?.key || "")] || segment?.color || "#6b7280");
+          const label = String(segment?.label || segment?.key || "Unknown");
+          const pctOfUsed = Number(segment?.percent_of_used ?? 0);
+
+          const segmentDiv = document.createElement("div");
+          segmentDiv.className = "storage-segment";
+          segmentDiv.style.width = `${clampPercent(widthPct).toFixed(3)}%`;
+          segmentDiv.style.background = color;
+          segmentDiv.title = `${label}: ${formatBytes(bytes)} (${pctOfUsed.toFixed(1)}% of used)`;
+          segmentsNode.appendChild(segmentDiv);
+
+          const item = document.createElement("div");
+          item.className = "storage-legend-item";
+          const left = document.createElement("div");
+          left.className = "storage-legend-left";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.background = color;
+          const name = document.createElement("span");
+          name.textContent = label;
+          left.appendChild(swatch);
+          left.appendChild(name);
+          const right = document.createElement("span");
+          const pctOfTotal = totalBytes > 0 ? (bytes / totalBytes) * 100 : 0;
+          right.textContent = `${formatBytes(bytes)} (${pctOfTotal.toFixed(1)}%)`;
+          item.appendChild(left);
+          item.appendChild(right);
+          legendNode.appendChild(item);
+        }
+      }
+
+      function renderSystemUtilization(payload) {
+        const cpuPct = clampPercent(payload?.cpu?.percent ?? 0);
+        const cores = Number(payload?.cpu?.logical_cores ?? 0);
+        document.getElementById("system-cpu-value").textContent = `${cpuPct.toFixed(1)}% / 100% (${cores} cores)`;
+        setUtilizationBar("system-cpu-bar", cpuPct);
+
+        const ramUsed = Number(payload?.ram?.used_bytes ?? 0);
+        const ramTotal = Number(payload?.ram?.total_bytes ?? 0);
+        const ramPct = clampPercent(payload?.ram?.percent ?? 0);
+        document.getElementById("system-ram-value").textContent = `${formatBytes(ramUsed)} / ${formatBytes(ramTotal)} (${ramPct.toFixed(1)}%)`;
+        setUtilizationBar("system-ram-bar", ramPct);
+
+        const driveUsed = Number(payload?.drive?.used_bytes ?? 0);
+        const driveTotal = Number(payload?.drive?.total_bytes ?? 0);
+        const driveFree = Number(payload?.drive?.free_bytes ?? 0);
+        const drivePct = clampPercent(payload?.drive?.percent ?? 0);
+        document.getElementById("system-storage-value").textContent =
+          `${formatBytes(driveUsed)} / ${formatBytes(driveTotal)} (${drivePct.toFixed(1)}%, free ${formatBytes(driveFree)})`;
+        setUtilizationBar("system-storage-bar", drivePct);
+        renderStorageBreakdown(payload);
+      }
+
+      async function loadSystemUtilization() {
+        try {
+          const result = await fetch("/api/system/utilization");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `system utilization failed (${result.status})`);
+          }
+          renderSystemUtilization(json);
+        } catch (error) {
+          document.getElementById("system-cpu-value").textContent = "Unavailable";
+          document.getElementById("system-ram-value").textContent = "Unavailable";
+          document.getElementById("system-storage-value").textContent = "Unavailable";
+          setUtilizationBar("system-cpu-bar", 0);
+          setUtilizationBar("system-ram-bar", 0);
+          setUtilizationBar("system-storage-bar", 0);
+          document.getElementById("system-storage-segments").innerHTML = "";
+          document.getElementById("system-storage-legend").innerHTML = "";
+          console.error(error);
+        }
       }
 
       function updateNoScrollState() {
@@ -1111,6 +3092,22 @@
           const item = findMediaItemByEventClip(event);
           if (item) {
             selectMediaItem(item, { autoplay: true });
+            return;
+          }
+          const clipUrl = resolveMediaUrl(event.clip);
+          if (clipUrl) {
+            selectMediaItem(
+              {
+                key: `event-clip-${event.id}`,
+                kind: "video",
+                url: clipUrl,
+                thumbnailUrl: resolveMediaUrl(event.snapshot),
+                title: `Event Clip #${event.id}`,
+                subtitle: `${event.label ?? "event"} | ${toLocalTime(event.ts_utc)}`,
+                sourceEventId: Number(event.id ?? 0) || null,
+              },
+              { autoplay: true }
+            );
           }
         };
 
@@ -1166,46 +3163,11 @@
 
       function buildMediaItems() {
         const items = [];
-        const seenVideoUrls = new Set();
-
-        for (const event of latestEvents) {
-          const snapshotUrl = resolveMediaUrl(event.snapshot);
-          const clipUrl = resolveMediaUrl(event.clip);
-          const eventTime = toLocalTime(event.ts_utc);
-          const confidence = safeNum(event.confidence);
-
-          if (snapshotUrl) {
-            items.push({
-              key: `event-${event.id}-snapshot`,
-              kind: "image",
-              url: snapshotUrl,
-              thumbnailUrl: snapshotUrl,
-              title: `Event Snapshot #${event.id}`,
-              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
-              sourceEventId: event.id,
-            });
-          }
-
-          if (clipUrl && !seenVideoUrls.has(clipUrl)) {
-            seenVideoUrls.add(clipUrl);
-            items.push({
-              key: `event-${event.id}-clip`,
-              kind: "video",
-              url: clipUrl,
-              thumbnailUrl: snapshotUrl,
-              title: `Event Clip #${event.id}`,
-              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
-              sourceEventId: event.id,
-            });
-          }
-        }
-
         for (const recording of latestRecordings) {
           const videoUrl = String(recording.url || "").trim();
-          if (!videoUrl || seenVideoUrls.has(videoUrl)) {
+          if (!videoUrl) {
             continue;
           }
-          seenVideoUrls.add(videoUrl);
           const mb = Number(recording.size_bytes || 0) / (1024 * 1024);
           const modifiedEpoch = Number(recording.modified_epoch);
           const modified = Number.isFinite(modifiedEpoch)
@@ -1218,7 +3180,9 @@
             thumbnailUrl: "",
             title: String(recording.name || "Recording"),
             subtitle: `${mb.toFixed(1)} MB | ${modified}`,
-            sourceEventId: null,
+            sourceEventId: Number.isFinite(Number(recording.source_event_id))
+              ? Number(recording.source_event_id)
+              : null,
           });
         }
         return items;
@@ -1232,7 +3196,7 @@
         if (!mediaItems.length) {
           const empty = document.createElement("div");
           empty.className = "muted";
-          empty.textContent = "No media yet. New snapshots and clips will appear here.";
+          empty.textContent = "No recordings match the current filters.";
           grid.appendChild(empty);
           selectedMediaKey = "";
           const player = document.getElementById("player");
@@ -1307,13 +3271,88 @@
         updateSelectedMediaCard();
       }
 
+      function updateEventsPagingUi() {
+        const info = document.getElementById("events-page-info");
+        const prevBtn = document.getElementById("events-page-prev");
+        const nextBtn = document.getElementById("events-page-next");
+        const total = Number(eventsPagination.total ?? 0);
+        const page = Number(eventsPagination.page ?? 1);
+        const pages = Number(eventsPagination.pages ?? 1);
+        info.textContent = `Page ${page} of ${pages} | Total ${total}`;
+        prevBtn.disabled = !Boolean(eventsPagination.has_prev);
+        nextBtn.disabled = !Boolean(eventsPagination.has_next);
+      }
+
+      function updateRecordingsPagingUi() {
+        const info = document.getElementById("recordings-page-info");
+        const prevBtn = document.getElementById("recordings-page-prev");
+        const nextBtn = document.getElementById("recordings-page-next");
+        const total = Number(recordingsPagination.total ?? 0);
+        const page = Number(recordingsPagination.page ?? 1);
+        const pages = Number(recordingsPagination.pages ?? 1);
+        info.textContent = `Page ${page} of ${pages} | Total ${total}`;
+        prevBtn.disabled = !Boolean(recordingsPagination.has_prev);
+        nextBtn.disabled = !Boolean(recordingsPagination.has_next);
+      }
+
+      function eventsQueryParams() {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(Math.max(0, Number(eventsPagination.offset ?? 0))));
+        params.set("q", String(eventsFiltersState.q || ""));
+        params.set("severity", String(eventsFiltersState.severity || "all"));
+        params.set("media", String(eventsFiltersState.media || "all"));
+        params.set("range", String(eventsFiltersState.range || "all"));
+        return params;
+      }
+
+      function recordingsQueryParams() {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(Math.max(0, Number(recordingsPagination.offset ?? 0))));
+        params.set("q", String(recordingsFiltersState.q || ""));
+        params.set("range", String(recordingsFiltersState.range || "all"));
+        params.set("sort", String(recordingsFiltersState.sort || "newest"));
+        return params;
+      }
+
+      function pullEventsFiltersFromUi() {
+        eventsFiltersState = {
+          q: String(document.getElementById("events-filter-q").value || "").trim(),
+          severity: String(document.getElementById("events-filter-severity").value || "all"),
+          media: String(document.getElementById("events-filter-media").value || "all"),
+          range: String(document.getElementById("events-filter-range").value || "all"),
+        };
+      }
+
+      function pullRecordingsFiltersFromUi() {
+        recordingsFiltersState = {
+          q: String(document.getElementById("recordings-filter-q").value || "").trim(),
+          range: String(document.getElementById("recordings-filter-range").value || "all"),
+          sort: String(document.getElementById("recordings-filter-sort").value || "newest"),
+        };
+      }
+
+      function resetEventsFiltersUi() {
+        document.getElementById("events-filter-q").value = "";
+        document.getElementById("events-filter-severity").value = "all";
+        document.getElementById("events-filter-media").value = "all";
+        document.getElementById("events-filter-range").value = "all";
+      }
+
+      function resetRecordingsFiltersUi() {
+        document.getElementById("recordings-filter-q").value = "";
+        document.getElementById("recordings-filter-range").value = "all";
+        document.getElementById("recordings-filter-sort").value = "newest";
+      }
+
       function renderEventCards() {
         const grid = document.getElementById("events");
         grid.innerHTML = "";
         if (!latestEvents.length) {
           const empty = document.createElement("div");
           empty.className = "muted";
-          empty.textContent = "No events yet.";
+          empty.textContent = "No events match the current filters.";
           grid.appendChild(empty);
           return;
         }
@@ -1356,19 +3395,116 @@
         }
       }
 
-      async function loadEvents() {
-        const result = await fetch("/api/events?limit=25");
-        const json = await result.json();
+      async function loadEvents(options = {}) {
+        const resetOffset = Boolean(options.resetOffset);
+        if (resetOffset) {
+          eventsPagination.offset = 0;
+        }
+        const result = await fetch(`/api/events?${eventsQueryParams().toString()}`);
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `events request failed (${result.status})`);
+        }
         latestEvents = Array.isArray(json.events) ? json.events : [];
+        const pagination = json.pagination || {};
+        eventsPagination = {
+          limit: Number(pagination.limit ?? PAGE_SIZE),
+          offset: Number(pagination.offset ?? eventsPagination.offset ?? 0),
+          total: Number(pagination.total ?? latestEvents.length),
+          page: Number(pagination.page ?? 1),
+          pages: Number(pagination.pages ?? 1),
+          has_prev: Boolean(pagination.has_prev),
+          has_next: Boolean(pagination.has_next),
+        };
+        updateEventsPagingUi();
         renderEventCards();
+      }
+
+      async function loadRecordings(options = {}) {
+        const resetOffset = Boolean(options.resetOffset);
+        if (resetOffset) {
+          recordingsPagination.offset = 0;
+        }
+        const result = await fetch(`/api/recordings?${recordingsQueryParams().toString()}`);
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `recordings request failed (${result.status})`);
+        }
+        latestRecordings = Array.isArray(json.recordings) ? json.recordings : [];
+        const pagination = json.pagination || {};
+        recordingsPagination = {
+          limit: Number(pagination.limit ?? PAGE_SIZE),
+          offset: Number(pagination.offset ?? recordingsPagination.offset ?? 0),
+          total: Number(pagination.total ?? latestRecordings.length),
+          page: Number(pagination.page ?? 1),
+          pages: Number(pagination.pages ?? 1),
+          has_prev: Boolean(pagination.has_prev),
+          has_next: Boolean(pagination.has_next),
+        };
+        updateRecordingsPagingUi();
         renderMediaGrid();
       }
 
-      async function loadRecordings() {
-        const result = await fetch("/api/recordings?limit=200");
-        const json = await result.json();
-        latestRecordings = Array.isArray(json.recordings) ? json.recordings : [];
-        renderMediaGrid();
+      function wireEventsAndRecordingsFilters() {
+        document.getElementById("events-filter-apply").addEventListener("click", () => {
+          pullEventsFiltersFromUi();
+          loadEvents({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("events-filter-clear").addEventListener("click", () => {
+          resetEventsFiltersUi();
+          pullEventsFiltersFromUi();
+          loadEvents({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("events-page-prev").addEventListener("click", () => {
+          if (!eventsPagination.has_prev) {
+            return;
+          }
+          eventsPagination.offset = Math.max(0, Number(eventsPagination.offset) - PAGE_SIZE);
+          loadEvents().catch(console.error);
+        });
+        document.getElementById("events-page-next").addEventListener("click", () => {
+          if (!eventsPagination.has_next) {
+            return;
+          }
+          eventsPagination.offset = Number(eventsPagination.offset) + PAGE_SIZE;
+          loadEvents().catch(console.error);
+        });
+        document.getElementById("events-filter-q").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            pullEventsFiltersFromUi();
+            loadEvents({ resetOffset: true }).catch(console.error);
+          }
+        });
+
+        document.getElementById("recordings-filter-apply").addEventListener("click", () => {
+          pullRecordingsFiltersFromUi();
+          loadRecordings({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("recordings-filter-clear").addEventListener("click", () => {
+          resetRecordingsFiltersUi();
+          pullRecordingsFiltersFromUi();
+          loadRecordings({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("recordings-page-prev").addEventListener("click", () => {
+          if (!recordingsPagination.has_prev) {
+            return;
+          }
+          recordingsPagination.offset = Math.max(0, Number(recordingsPagination.offset) - PAGE_SIZE);
+          loadRecordings().catch(console.error);
+        });
+        document.getElementById("recordings-page-next").addEventListener("click", () => {
+          if (!recordingsPagination.has_next) {
+            return;
+          }
+          recordingsPagination.offset = Number(recordingsPagination.offset) + PAGE_SIZE;
+          loadRecordings().catch(console.error);
+        });
+        document.getElementById("recordings-filter-q").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            pullRecordingsFiltersFromUi();
+            loadRecordings({ resetOffset: true }).catch(console.error);
+          }
+        });
       }
 
       function getLogPane(key) {
@@ -1740,18 +3876,19 @@
         });
       }
 
-      async function loadLatestSnapshot() {
-        const result = await fetch("/api/latest-snapshot");
-        const json = await result.json();
-        const img = document.getElementById("snapshot");
-        const note = document.getElementById("snapshot-note");
-        if (!json.url) {
-          img.removeAttribute("src");
-          note.textContent = "Waiting for first detection event...";
-          return;
+      function wireSystemControls() {
+        const shutdownBtn = document.getElementById("system-shutdown-btn");
+        const rebootBtn = document.getElementById("system-reboot-btn");
+        if (shutdownBtn) {
+          shutdownBtn.addEventListener("click", () => {
+            scheduleSystemServerAction("shutdown").catch(console.error);
+          });
         }
-        img.src = `${json.url}?t=${Date.now()}`;
-        note.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        if (rebootBtn) {
+          rebootBtn.addEventListener("click", () => {
+            scheduleSystemServerAction("reboot").catch(console.error);
+          });
+        }
       }
 
       async function refresh() {
@@ -1762,9 +3899,18 @@
             loadEvents(),
             loadRecordings(),
             refreshLogsPanel({ preserveCurrent: true, animate: false }),
-            loadLatestSnapshot(),
           ];
           await Promise.all(tasks);
+          const cameraTabVisible = !document.getElementById("camera-tab").classList.contains("hidden");
+          if (cameraTabVisible) {
+            await refreshCameraControlStatus({ quiet: true });
+            await refreshCameraAutomationStatus({ quiet: true });
+            await refreshCameraModeState({ quiet: true, keepEdits: true });
+          }
+          const systemTabVisible = !document.getElementById("system-tab").classList.contains("hidden");
+          if (systemTabVisible) {
+            await loadSystemUtilization();
+          }
         } catch (error) {
           setTelemetryValue("telemetry-backend", "Unavailable", "warn");
           console.error(error);
@@ -1774,11 +3920,20 @@
       document.getElementById("live-refresh").addEventListener("click", startLiveFeed);
 
       wireLogCarousel();
+      wireCameraControlPanel();
+      wireEventsAndRecordingsFilters();
       wireEventModal();
+      wireSystemControls();
       wireLiveFullscreen();
       wireLiveFrameStatus();
+      pullEventsFiltersFromUi();
+      pullRecordingsFiltersFromUi();
       refresh();
       startLiveFeed();
+      loadServerControlState({ quiet: true });
+      setInterval(() => {
+        loadServerControlState({ quiet: true }).catch(() => {});
+      }, 1000);
       setInterval(refresh, DASHBOARD_REFRESH_INTERVAL_MS);
     </script>
   </body>
