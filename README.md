@@ -1,57 +1,22 @@
-# Remote Doorbell Camera System (Local-First Capstone)
+# LAN Cam
 
-Local-first doorbell camera platform for a capstone project.
-The stack is hosted on a Windows laptop and provides live view, event detection, and local logging/metadata.
+LAN Cam is a local-network camera control and monitoring platform.
 
-## What This Is
+## Stack
 
-- FastAPI + Uvicorn backend serving the dashboard and APIs
-- Live stream route (`/camera/live`) with backend-managed ingest
-- YOLO-based person detection with snapshot/event creation
-- SQLite-backed event metadata
-- Local media and log storage
-- Tailscale-ready remote access path
-- OpenWrt firewall hardening scope (no VLAN buildout in this phase)
+- Backend: FastAPI + Uvicorn (Python)
+- Frontend: single-page HTML/CSS/JavaScript dashboard
+- Storage: SQLite + local filesystem media/logs
+- Vision: YOLO-based detection pipeline
+- Firmware: ESP32-CAM firmware tracked in `ESPConf/`
 
-## Current Phase
+## Recent Repository Changes
 
-- Live stream through backend is working
-- Detector is active and writing events to SQLite
-- Dashboard has tabs for Live Feed, Events, Logs, Server Logs, and System
-- Recorder pipeline is still transitional
-- RTSP is currently under evaluation (not finalized as required source path)
-
-## What's In This Repo
-
-- `app/backend/`: FastAPI API, ingest service, SQLite/event routes
-- `app/frontend/`: dashboard UI
-- `scripts/windows/`: startup/setup scripts
-- `scripts/python/`: detection/recording/support scripts
-- `configs/app/`: app settings templates
-- `configs/openwrt/`: firewall/config templates
-- `ESPConf/`: ESP32 camera testing history and template-safe legacy configs
-
-## ESP Firmware Safety Note
-
-- Keep real firmware credentials/tokens only in local runtime `.ino` files.
-- For Git-safe sharing, use the matching template:
-  - `ESPConf/LegacyTestingphase/CameraWebServer/CameraWebServer.example.ino`
-- If missing locally, create runtime file by copying the example and filling real local values:
-
-```powershell
-Copy-Item .\ESPConf\LegacyTestingphase\CameraWebServer\CameraWebServer.example.ino .\ESPConf\LegacyTestingphase\CameraWebServer\CameraWebServer.ino
-```
-
-## Quick Start (Windows)
-
-```powershell
-.\scripts\windows\setup_project.ps1
-Copy-Item .\configs\app\settings.example.json .\configs\app\settings.local.json
-.\scripts\windows\start_backend.ps1 -WithDetector
-```
-
-Open: [http://localhost:8080](http://localhost:8080)
-
-## Known Issues
-
-- Backend can start successfully after restart but still become unusable shortly after; restart stability is an active troubleshooting item.
+- Added dedicated `Camera` tab with mode engine actions and camera-control workflows.
+- Added strict sync-drift behavior and immediate reconciliation support (`In Sync`, `D-Sync`, `Reapplying`, `Camera Unavailable`).
+- Added readable camera/system panels with raw JSON toggles instead of JSON-only views.
+- Added Events and Recordings pagination + filters (default page size `24`).
+- Added System utilization cards/bars (CPU, RAM, storage with category breakdown visuals).
+- Added backend shutdown/reboot controls in System with confirmation + UI countdown state.
+- Updated interactive UI behavior (hover/press feedback and action-focused output scrolling).
+- Added `ESPConf/CurrentProd/CurrentProdESP` safe firmware mirror from current production source with sanitized Wi-Fi/token values.
