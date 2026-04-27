@@ -31,7 +31,9 @@
     "capture_fps": 12,
     "output_fps": 10,
     "reconnect_delay_seconds": 2,
-    "stale_frame_seconds": 5
+    "stale_frame_seconds": 5,
+    "clip_buffer_seconds": 60,
+    "clip_buffer_fps": 12
   },
   "storage": {
     "sqlite_path": "data/events/events.db"
@@ -42,6 +44,11 @@
     "retry_delay_seconds": 10,
     "stale_running_seconds": 300,
     "sample_limit": 100
+  },
+  "retention": {
+    "auto_cull_enabled": true,
+    "auto_cull_interval_seconds": 60,
+    "auto_cull_apply_file_delete": true
   },
   "detection": {
     "model_path": "yolov8n.pt",
@@ -63,6 +70,8 @@
     "motion_resize_width": 320,
     "motion_blur_kernel": 5,
     "motion_force_inference_interval_seconds": 12,
+    "event_clip_pre_roll_seconds": 8,
+    "event_idle_timeout_seconds": 6,
     "status_log_interval_seconds": 60,
     "log_file": "data/logs/detector.log",
     "log_level": "INFO",
@@ -102,10 +111,40 @@
       "include_clip_default": false
     }
   },
+  "dispatches": {
+    "enabled": true,
+    "restart": {
+      "planned_enabled": true,
+      "unexpected_enabled": true,
+      "cooldown_seconds": 180
+    },
+    "camera_disconnect": {
+      "enabled": true,
+      "recovery_enabled": true,
+      "cooldown_seconds": 180
+    }
+  },
   "auth": {
     "enabled": false,
+    "admin_token": "YOUR_BACKEND_ADMIN_TOKEN_HERE",
     "session_secret": "PUT_LONG_RANDOM_SESSION_SECRET_HERE",
     "session_hours": 24
+  },
+  "server_control": {
+    "restart_schedule": {
+      "daily": {
+        "enabled": false,
+        "time_local": "04:00",
+        "last_run_date_local": ""
+      },
+      "weekly": {
+        "enabled": false,
+        "weekday": 0,
+        "time_local": "04:00",
+        "last_run_key_local": ""
+      },
+      "updated_ts_utc": ""
+    }
   },
   "api": {
     "host": "0.0.0.0",

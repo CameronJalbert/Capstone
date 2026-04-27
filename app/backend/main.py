@@ -4,6 +4,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import signal
 import sqlite3
 import socket
@@ -13,6 +14,9 @@ import threading
 import time
 import ctypes
 import shutil
+import hmac
+import ipaddress
+import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -20,11 +24,12 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 
 import numpy as np
+import cv2
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request as FastAPIRequest
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -36,22 +41,31 @@ from app.backend.storage.sqlite_store import (
     backfill_event_policy_fields,
     claim_next_background_job,
     complete_background_job,
+    create_saved_item,
     enqueue_background_job,
     fail_or_retry_background_job,
     fetch_camera_mode_state,
     fetch_recent_events,
     fetch_background_jobs,
     fetch_event_by_id,
+    fetch_recent_server_restart_events,
+    fetch_saved_item_by_id,
+    insert_server_restart_event,
+    insert_event_record,
     import_ndjson_events_if_sqlite_empty,
     initialize_sqlite_schema,
+    list_saved_items,
+    mark_saved_item_deleted,
     media_integrity_report,
     requeue_stale_running_jobs,
     repair_media_integrity,
+    reset_event_retention_from_now,
     retention_summary,
     resolve_sqlite_path,
     run_retention_cull,
     save_camera_mode_state,
     sqlite_status,
+    update_event_lifecycle_state,
 )
 
 
@@ -82,6 +96,8 @@ EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 SQLITE_DB_PATH: Path | None = None
 JOB_RUNNER: "BackgroundJobRunner" | None = None
 PROFILE_AUTOMATION_RUNNER: "CameraProfileAutomationRunner" | None = None
+CLIP_CAPTURE_MANAGER: "ClipCaptureManager" | None = None
+RESTART_SCHEDULE_RUNNER: "RestartScheduleRunner" | None = None
 CONFIG_WRITE_LOCK = threading.Lock()
 SERVER_CONTROL_STATE_LOCK = threading.Lock()
 SERVER_CONTROL_SIGNAL_LOCK = threading.Lock()
@@ -122,6 +138,26 @@ SERVER_CONTROL_STATE: dict[str, Any] = {
     "remaining_seconds": 0.0,
     "restart_spawned": False,
 }
+VIEWER_HEARTBEATS_LOCK = threading.Lock()
+VIEWER_HEARTBEATS: dict[str, dict[str, Any]] = {}
+VIEWER_HEARTBEAT_TTL_SECONDS = 30.0
+SYSTEM_DISPATCH_STATE_LOCK = threading.Lock()
+SYSTEM_DISPATCH_STATE: dict[str, Any] = {
+    "last_restart_key": "",
+    "last_restart_dispatch_ts_utc": "",
+    "camera_offline": None,
+    "camera_source_states": {},
+    "camera_last_state_change_ts_utc": "",
+    "camera_last_disconnect_dispatch_ts_utc": "",
+    "camera_last_recovery_dispatch_ts_utc": "",
+    "camera_expected_reboot_until_ts_utc": "",
+    "camera_expected_reboot_reason": "",
+    "camera_expected_reboot_delay_ms": 0,
+}
+SERVER_STATE_DIR = DATA_DIR / "server_state"
+SERVER_STATE_DIR.mkdir(parents=True, exist_ok=True)
+PLANNED_RESTART_MARKER_FILE = SERVER_STATE_DIR / "planned_restart_marker.json"
+CACHE_ADMIN_TOKEN = {"value": "", "loaded_at_monotonic": 0.0}
 
 app = FastAPI(
     title="Local-First Doorbell Camera API",
@@ -131,6 +167,33 @@ app = FastAPI(
 
 app.mount("/snapshots", StaticFiles(directory=str(SNAPSHOT_DIR)), name="snapshots")
 app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recordings")
+
+
+@app.middleware("http")
+async def admin_token_guard_middleware(request: FastAPIRequest, call_next):  # type: ignore[no-untyped-def]
+    """Enforce admin-token auth for mutating APIs and protected read-only surfaces."""
+    path = str(request.url.path or "")
+    method = str(request.method or "GET").upper()
+    if path.startswith("/api/"):
+        if path.startswith("/api/viewers/"):
+            return await call_next(request)
+        read_only = method in {"GET", "HEAD", "OPTIONS"}
+        protected_read_prefixes = (
+            "/api/camera-control",
+            "/api/server",
+            "/api/jobs",
+            "/api/retention",
+            "/api/media/integrity",
+            "/api/capture",
+            "/api/saved",
+            "/api/restart-events",
+        )
+        if read_only:
+            if any(path.startswith(prefix) for prefix in protected_read_prefixes):
+                _require_admin_access(request, allow_tailscale_read_only=True)
+        else:
+            _require_admin_access(request, allow_tailscale_read_only=False)
+    return await call_next(request)
 
 
 def _load_config() -> dict[str, Any]:
@@ -322,7 +385,22 @@ def _schedule_server_action(
         execute_at_utc=execute_at_utc,
         relay_signal=relay_signal,
     )
-    return _server_control_state_snapshot()
+    snapshot = _server_control_state_snapshot()
+    if selected == SERVER_ACTION_REBOOT:
+        _write_planned_restart_marker(snapshot)
+    else:
+        _clear_planned_restart_marker()
+    _record_restart_event(
+        classification="planned",
+        reason=str(snapshot.get("reason", "")),
+        trigger=str(snapshot.get("trigger", "")),
+        action=str(snapshot.get("action", "")),
+        metadata={
+            "execute_at_utc": str(snapshot.get("execute_at_utc", "")),
+            "delay_seconds": int(snapshot.get("delay_seconds", 0)),
+        },
+    )
+    return snapshot
 
 
 def _server_control_signal_handler(signum: int, _frame: Any) -> None:
@@ -354,6 +432,849 @@ def _install_server_control_signal_handlers() -> None:
             except (ValueError, OSError, RuntimeError):
                 continue
         SERVER_CONTROL_SIGNAL_HOOKS_INSTALLED = bool(SERVER_CONTROL_SIGNAL_HANDLERS)
+
+
+def _is_tailscale_client_ip(host: str) -> bool:
+    text = str(host or "").strip()
+    if not text:
+        return False
+    try:
+        ip_obj = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    tailscale_v4 = ipaddress.ip_network("100.64.0.0/10")
+    tailscale_v6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+    return ip_obj in tailscale_v4 or ip_obj in tailscale_v6
+
+
+def _extract_bearer_token(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.lower().startswith("bearer "):
+        return text[7:].strip()
+    return ""
+
+
+def _load_admin_token() -> str:
+    """Return runtime admin token used for backend mutating-route protection."""
+    now = time.monotonic()
+    cached_value = str(CACHE_ADMIN_TOKEN.get("value", "")).strip()
+    cached_at = float(CACHE_ADMIN_TOKEN.get("loaded_at_monotonic", 0.0))
+    if cached_value and (now - cached_at) < 15.0:
+        return cached_value
+    token = ""
+    try:
+        config = _load_config()
+        token = str((config.get("auth", {}) or {}).get("admin_token", "")).strip()
+    except Exception:
+        token = ""
+    CACHE_ADMIN_TOKEN["value"] = token
+    CACHE_ADMIN_TOKEN["loaded_at_monotonic"] = now
+    return token
+
+
+def _request_admin_token(request: FastAPIRequest) -> str:
+    header_token = str(request.headers.get("x-admin-token", "")).strip()
+    if header_token:
+        return header_token
+    auth_header = str(request.headers.get("authorization", "")).strip()
+    bearer = _extract_bearer_token(auth_header)
+    if bearer:
+        return bearer
+    query_token = str(request.query_params.get("token", "")).strip()
+    return query_token
+
+
+def _require_admin_access(request: FastAPIRequest, *, allow_tailscale_read_only: bool = True) -> None:
+    """Enforce admin token for protected endpoints; tailscale may bypass for read-only routes."""
+    configured_token = _load_admin_token()
+    if not configured_token:
+        return
+
+    method = str(request.method or "GET").upper()
+    read_only_method = method in {"GET", "HEAD", "OPTIONS"}
+    client_host = str(getattr(request.client, "host", "") or "")
+    if allow_tailscale_read_only and read_only_method and _is_tailscale_client_ip(client_host):
+        return
+
+    provided = _request_admin_token(request)
+    if not provided or not hmac.compare_digest(provided, configured_token):
+        raise HTTPException(status_code=401, detail="admin token required")
+
+
+def _write_planned_restart_marker(state: dict[str, Any]) -> None:
+    payload = {
+        "action": str(state.get("action", "")),
+        "reason": str(state.get("reason", "")),
+        "trigger": str(state.get("trigger", "")),
+        "scheduled_at_utc": str(state.get("scheduled_at_utc", "")),
+        "execute_at_utc": str(state.get("execute_at_utc", "")),
+        "written_ts_utc": _utc_now(),
+    }
+    try:
+        with PLANNED_RESTART_MARKER_FILE.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.write("\n")
+    except OSError:
+        return
+
+
+def _read_planned_restart_marker() -> dict[str, Any] | None:
+    if not PLANNED_RESTART_MARKER_FILE.exists():
+        return None
+    try:
+        with PLANNED_RESTART_MARKER_FILE.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _clear_planned_restart_marker() -> None:
+    try:
+        if PLANNED_RESTART_MARKER_FILE.exists():
+            PLANNED_RESTART_MARKER_FILE.unlink()
+    except OSError:
+        return
+
+
+def _record_restart_event(
+    *,
+    classification: str,
+    reason: str,
+    trigger: str,
+    action: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if SQLITE_DB_PATH is None:
+        return
+    try:
+        insert_server_restart_event(
+            SQLITE_DB_PATH,
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata=metadata or {},
+            ts_utc=_utc_now(),
+        )
+    except Exception:
+        return
+
+
+def _classify_startup_restart_state() -> None:
+    marker = _read_planned_restart_marker()
+    if marker is None:
+        classification = "unexpected"
+        reason = "startup_without_planned_marker"
+        trigger = "backend_startup"
+        action = "startup"
+        _record_restart_event(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata={},
+        )
+        _dispatch_restart_state_notification(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata={},
+        )
+        return
+    execute_at = _parse_utc(marker.get("execute_at_utc"))
+    now = datetime.now(timezone.utc)
+    age_ok = execute_at is not None and abs((now - execute_at).total_seconds()) <= 600
+    if age_ok:
+        classification = "planned"
+        reason = str(marker.get("reason", "")) or "planned_restart_marker"
+        trigger = str(marker.get("trigger", "")) or "scheduled_marker"
+        action = str(marker.get("action", "")) or "reboot"
+        _record_restart_event(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata={"startup_detected": True},
+        )
+        _dispatch_restart_state_notification(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata={"startup_detected": True},
+        )
+    else:
+        classification = "unexpected"
+        reason = "stale_planned_marker"
+        trigger = "backend_startup"
+        action = "startup"
+        marker_payload = {"marker": marker}
+        _record_restart_event(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata=marker_payload,
+        )
+        _dispatch_restart_state_notification(
+            classification=classification,
+            reason=reason,
+            trigger=trigger,
+            action=action,
+            metadata=marker_payload,
+        )
+    _clear_planned_restart_marker()
+
+
+def _prune_viewers_locked(now_monotonic: float) -> None:
+    cutoff = now_monotonic - VIEWER_HEARTBEAT_TTL_SECONDS
+    stale_ids = [viewer_id for viewer_id, row in VIEWER_HEARTBEATS.items() if float(row.get("last_seen_monotonic", 0.0)) < cutoff]
+    for viewer_id in stale_ids:
+        VIEWER_HEARTBEATS.pop(viewer_id, None)
+
+
+def _viewer_count_payload() -> dict[str, Any]:
+    now_monotonic = time.monotonic()
+    with VIEWER_HEARTBEATS_LOCK:
+        _prune_viewers_locked(now_monotonic)
+        active = len(VIEWER_HEARTBEATS)
+    return {
+        "active_viewers": active,
+        "ttl_seconds": VIEWER_HEARTBEAT_TTL_SECONDS,
+        "as_of_utc": _utc_now(),
+    }
+
+
+def _register_viewer_heartbeat(
+    *,
+    viewer_id: str | None,
+    client_host: str,
+    user_agent: str,
+) -> dict[str, Any]:
+    now_monotonic = time.monotonic()
+    now_utc = _utc_now()
+    normalized_id = str(viewer_id or "").strip() or f"viewer_{uuid.uuid4().hex[:12]}"
+    with VIEWER_HEARTBEATS_LOCK:
+        _prune_viewers_locked(now_monotonic)
+        VIEWER_HEARTBEATS[normalized_id] = {
+            "id": normalized_id,
+            "last_seen_monotonic": now_monotonic,
+            "last_seen_ts_utc": now_utc,
+            "client_host": str(client_host or ""),
+            "user_agent": str(user_agent or "")[:300],
+        }
+        active = len(VIEWER_HEARTBEATS)
+    return {"viewer_id": normalized_id, "active_viewers": active, "as_of_utc": now_utc}
+
+
+def _ensure_even_dimension(value: int) -> int:
+    number = max(2, int(value))
+    return number if number % 2 == 0 else number - 1
+
+
+def _new_recording_path(prefix: str) -> tuple[Path, str]:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    rand = uuid.uuid4().hex[:6]
+    name = f"{prefix}_{ts}_{rand}.mp4"
+    abs_path = RECORDINGS_DIR / name
+    rel_path = f"data/recordings/{name}"
+    return abs_path, rel_path
+
+
+def _new_snapshot_path(prefix: str) -> tuple[Path, str]:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    rand = uuid.uuid4().hex[:6]
+    name = f"{prefix}_{ts}_{rand}.jpg"
+    abs_path = SNAPSHOT_DIR / name
+    rel_path = f"data/snapshots/{name}"
+    return abs_path, rel_path
+
+
+def _normalize_recording_ref(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("\\", "/")
+    if normalized.startswith("/recordings/"):
+        return f"data/recordings/{normalized.split('/')[-1]}"
+    if normalized.startswith("recordings/"):
+        return f"data/{normalized}"
+    if normalized.startswith("data/recordings/"):
+        return normalized
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        try:
+            rel = candidate.relative_to(ROOT)
+            rel_text = str(rel).replace("\\", "/")
+            return rel_text if rel_text.startswith("data/recordings/") else None
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_snapshot_ref(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("\\", "/")
+    if normalized.startswith("/snapshots/"):
+        return f"data/snapshots/{normalized.split('/')[-1]}"
+    if normalized.startswith("snapshots/"):
+        return f"data/{normalized}"
+    if normalized.startswith("data/snapshots/"):
+        return normalized
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        try:
+            rel = candidate.relative_to(ROOT)
+            rel_text = str(rel).replace("\\", "/")
+            return rel_text if rel_text.startswith("data/snapshots/") else None
+        except ValueError:
+            return None
+    return None
+
+
+def _write_clip_from_frames(
+    *,
+    frames: list[tuple[float, np.ndarray]],
+    output_abs_path: Path,
+    fps: float,
+) -> dict[str, Any]:
+    if not frames:
+        return {"ok": False, "error": "no_frames"}
+    first = frames[0][1]
+    if first is None or getattr(first, "shape", None) is None:
+        return {"ok": False, "error": "invalid_first_frame"}
+    height = _ensure_even_dimension(int(first.shape[0]))
+    width = _ensure_even_dimension(int(first.shape[1]))
+    effective_fps = max(1.0, min(float(fps), 30.0))
+    if len(frames) >= 3:
+        deltas: list[float] = []
+        previous_ts: float | None = None
+        for ts_value, _ in frames:
+            try:
+                current_ts = float(ts_value)
+            except (TypeError, ValueError):
+                previous_ts = None
+                continue
+            if previous_ts is None:
+                previous_ts = current_ts
+                continue
+            delta = current_ts - previous_ts
+            previous_ts = current_ts
+            if 0.001 <= delta <= 2.0:
+                deltas.append(delta)
+        if deltas:
+            deltas.sort()
+            sampled_interval = deltas[len(deltas) // 2]
+            if sampled_interval > 0:
+                sampled_fps = 1.0 / sampled_interval
+                effective_fps = max(1.0, min(float(sampled_fps), effective_fps, 30.0))
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_abs_path), fourcc, effective_fps, (width, height))
+    if not writer.isOpened():
+        return {"ok": False, "error": "video_writer_open_failed"}
+    written = 0
+    try:
+        for _, frame in frames:
+            if frame is None:
+                continue
+            frame_height = int(frame.shape[0])
+            frame_width = int(frame.shape[1])
+            if frame_width != width or frame_height != height:
+                resized = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+                writer.write(resized)
+            else:
+                writer.write(frame)
+            written += 1
+    finally:
+        writer.release()
+    if written <= 0:
+        try:
+            if output_abs_path.exists():
+                output_abs_path.unlink()
+        except OSError:
+            pass
+        return {"ok": False, "error": "no_frames_written"}
+    transcode = _transcode_clip_to_h264_web(output_abs_path)
+    return {
+        "ok": True,
+        "written_frames": written,
+        "fps": effective_fps,
+        "transcode_ok": bool(transcode.get("ok", False)),
+        "transcode_reason": str(transcode.get("reason", "")),
+    }
+
+
+def _resolve_ffmpeg_binary() -> str:
+    try:
+        config = _load_config()
+    except Exception:
+        return "ffmpeg"
+    recording_cfg = config.get("recording", {})
+    candidate = str(recording_cfg.get("ffmpeg_path", "ffmpeg") or "").strip()
+    return candidate or "ffmpeg"
+
+
+def _transcode_clip_to_h264_web(input_abs_path: Path) -> dict[str, Any]:
+    """Best-effort transcode to browser-friendly H.264/yuv420p MP4."""
+    if not input_abs_path.exists():
+        return {"ok": False, "reason": "input_missing"}
+    ffmpeg_bin = _resolve_ffmpeg_binary()
+    temp_output = input_abs_path.with_name(f"{input_abs_path.stem}.h264_tmp{input_abs_path.suffix}")
+    command = [
+        ffmpeg_bin,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(input_abs_path),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "baseline",
+        "-level:v",
+        "3.0",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "24",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(temp_output),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "reason": "ffmpeg_not_found"}
+    except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+        return {"ok": False, "reason": f"ffmpeg_exec_error:{type(exc).__name__}"}
+
+    if completed.returncode != 0 or not temp_output.exists():
+        stderr = str(completed.stderr or "").strip()
+        try:
+            if temp_output.exists():
+                temp_output.unlink()
+        except OSError:
+            pass
+        return {"ok": False, "reason": "ffmpeg_transcode_failed", "stderr": stderr[:400]}
+
+    try:
+        os.replace(temp_output, input_abs_path)
+    except OSError:
+        try:
+            if temp_output.exists():
+                temp_output.unlink()
+        except OSError:
+            pass
+        return {"ok": False, "reason": "replace_failed"}
+    return {"ok": True, "reason": "h264_transcoded"}
+
+
+class EventClipSession:
+    """One detector-driven event clip session with heartbeat-controlled lifetime."""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        event_id: int,
+        output_rel_path: str,
+        output_abs_path: Path,
+        pre_roll_seconds: float,
+        idle_timeout_seconds: float,
+        output_fps: float,
+    ) -> None:
+        self.session_id = session_id
+        self.event_id = int(event_id)
+        self.output_rel_path = output_rel_path
+        self.output_abs_path = output_abs_path
+        self.pre_roll_seconds = max(5.0, min(float(pre_roll_seconds), 10.0))
+        self.idle_timeout_seconds = max(2.0, float(idle_timeout_seconds))
+        self.output_fps = max(2.0, min(float(output_fps), 20.0))
+        self.created_ts_utc = _utc_now()
+        self.started_monotonic = time.monotonic()
+        self.last_heartbeat_monotonic = self.started_monotonic
+        self.last_heartbeat_ts_utc = self.created_ts_utc
+        self.status = "starting"
+        self.error = ""
+        self.written_frames = 0
+        self.stop_requested = False
+        self.stop_reason = ""
+        self.finished_ts_utc = ""
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name=f"event-clip-{self.session_id}")
+        self._thread.start()
+
+    def heartbeat(self) -> None:
+        with self._lock:
+            self.last_heartbeat_monotonic = time.monotonic()
+            self.last_heartbeat_ts_utc = _utc_now()
+
+    def request_stop(self, reason: str) -> None:
+        with self._lock:
+            self.stop_requested = True
+            self.stop_reason = str(reason or "").strip() or "requested"
+
+    def join(self, timeout_seconds: float = 20.0) -> None:
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=max(1.0, float(timeout_seconds)))
+
+    def to_payload(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "session_id": self.session_id,
+                "event_id": self.event_id,
+                "output_clip_path": self.output_rel_path,
+                "status": self.status,
+                "error": self.error,
+                "written_frames": self.written_frames,
+                "created_ts_utc": self.created_ts_utc,
+                "last_heartbeat_ts_utc": self.last_heartbeat_ts_utc,
+                "stop_reason": self.stop_reason,
+                "finished_ts_utc": self.finished_ts_utc,
+            }
+
+    def _run_loop(self) -> None:
+        pre_roll = ingest_service.get_recent_frames(self.pre_roll_seconds)
+        if not pre_roll:
+            with self._lock:
+                self.status = "failed"
+                self.error = "pre_roll_not_available"
+                self.finished_ts_utc = _utc_now()
+            return
+        base_height = _ensure_even_dimension(int(pre_roll[0][1].shape[0]))
+        base_width = _ensure_even_dimension(int(pre_roll[0][1].shape[1]))
+        writer = cv2.VideoWriter(
+            str(self.output_abs_path),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            max(1.0, self.output_fps),
+            (base_width, base_height),
+        )
+        if not writer.isOpened():
+            with self._lock:
+                self.status = "failed"
+                self.error = "video_writer_open_failed"
+                self.finished_ts_utc = _utc_now()
+            return
+        for _, frame in pre_roll:
+            if frame is None:
+                continue
+            frame_height = int(frame.shape[0])
+            frame_width = int(frame.shape[1])
+            if frame_width != base_width or frame_height != base_height:
+                resized = cv2.resize(frame, (base_width, base_height), interpolation=cv2.INTER_AREA)
+                writer.write(resized)
+            else:
+                writer.write(frame)
+            self.written_frames += 1
+
+        last_seq = -1
+        with self._lock:
+            self.status = "recording"
+        try:
+            while True:
+                with self._lock:
+                    now_mono = time.monotonic()
+                    idle_elapsed = now_mono - self.last_heartbeat_monotonic
+                    if self.stop_requested:
+                        break
+                    if idle_elapsed > self.idle_timeout_seconds:
+                        self.stop_reason = "idle_timeout"
+                        break
+                frame, seq, _ = ingest_service.get_latest_frame_packet()
+                if frame is None or seq <= last_seq:
+                    time.sleep(0.05)
+                    continue
+                frame_height = int(frame.shape[0])
+                frame_width = int(frame.shape[1])
+                if frame_width != base_width or frame_height != base_height:
+                    resized = cv2.resize(frame, (base_width, base_height), interpolation=cv2.INTER_AREA)
+                    writer.write(resized)
+                else:
+                    writer.write(frame)
+                last_seq = seq
+                with self._lock:
+                    self.written_frames += 1
+                time.sleep(max(0.01, 1.0 / self.output_fps))
+        except Exception as exc:
+            with self._lock:
+                self.status = "failed"
+                self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            writer.release()
+            transcode_result = _transcode_clip_to_h264_web(self.output_abs_path)
+            with self._lock:
+                if self.status != "failed":
+                    self.status = "finished"
+                    if not bool(transcode_result.get("ok", False)):
+                        self.error = str(transcode_result.get("reason", "transcode_failed"))
+                self.finished_ts_utc = _utc_now()
+
+
+class ClipCaptureManager:
+    """Manage one active detector clip session and manual lookback clips."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active_session: EventClipSession | None = None
+
+    def start_event_session(
+        self,
+        *,
+        event_id: int,
+        pre_roll_seconds: float,
+        idle_timeout_seconds: float,
+        output_fps: float,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if self._active_session is not None and self._active_session.status in {"starting", "recording"}:
+                raise RuntimeError("event_clip_session_already_active")
+            output_abs, output_rel = _new_recording_path(prefix=f"event_{int(event_id)}")
+            session = EventClipSession(
+                session_id=f"sess_{uuid.uuid4().hex[:10]}",
+                event_id=int(event_id),
+                output_rel_path=output_rel,
+                output_abs_path=output_abs,
+                pre_roll_seconds=pre_roll_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+                output_fps=output_fps,
+            )
+            self._active_session = session
+            session.start()
+            return session.to_payload()
+
+    def heartbeat(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            session = self._active_session
+        if session is None or session.session_id != str(session_id):
+            raise RuntimeError("session_not_found")
+        session.heartbeat()
+        return session.to_payload()
+
+    def stop(self, session_id: str, *, reason: str) -> dict[str, Any]:
+        with self._lock:
+            session = self._active_session
+        if session is None or session.session_id != str(session_id):
+            raise RuntimeError("session_not_found")
+        session.request_stop(reason)
+        session.join(timeout_seconds=30.0)
+        payload = session.to_payload()
+        with self._lock:
+            if self._active_session and self._active_session.session_id == session.session_id:
+                self._active_session = None
+        return payload
+
+    def active_status(self) -> dict[str, Any]:
+        with self._lock:
+            session = self._active_session
+        if session is None:
+            return {"active": False}
+        payload = session.to_payload()
+        payload["active"] = payload.get("status") in {"starting", "recording"}
+        return payload
+
+    def create_manual_clip(
+        self,
+        *,
+        seconds: int,
+        fps: float,
+    ) -> dict[str, Any]:
+        lookback = max(5, min(int(seconds), 60))
+        frames = ingest_service.get_recent_frames(float(lookback))
+        output_abs, output_rel = _new_recording_path(prefix=f"manual_clip_{lookback}s")
+        result = _write_clip_from_frames(frames=frames, output_abs_path=output_abs, fps=fps)
+        if not bool(result.get("ok", False)):
+            raise RuntimeError(str(result.get("error", "manual_clip_failed")))
+        snapshot_abs, snapshot_rel = _new_snapshot_path(prefix=f"manual_clip_{lookback}s")
+        if frames:
+            cv2.imwrite(str(snapshot_abs), frames[-1][1])
+        return {
+            "ok": True,
+            "clip_path": output_rel,
+            "snapshot_path": snapshot_rel,
+            "seconds": lookback,
+            "written_frames": int(result.get("written_frames", 0)),
+        }
+
+
+def _default_restart_schedule() -> dict[str, Any]:
+    return {
+        "daily": {
+            "enabled": False,
+            "time_local": "04:00",
+            "last_run_date_local": "",
+        },
+        "weekly": {
+            "enabled": False,
+            "weekday": 0,
+            "time_local": "04:00",
+            "last_run_key_local": "",
+        },
+        "updated_ts_utc": "",
+    }
+
+
+def _normalize_hhmm(value: Any, *, fallback: str = "04:00") -> str:
+    text = str(value or "").strip()
+    if len(text) == 5 and text[2] == ":":
+        try:
+            hour = int(text[:2])
+            minute = int(text[3:])
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return f"{hour:02d}:{minute:02d}"
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _normalize_restart_schedule(raw: Any) -> dict[str, Any]:
+    defaults = _default_restart_schedule()
+    candidate = raw if isinstance(raw, dict) else {}
+    daily = candidate.get("daily") if isinstance(candidate.get("daily"), dict) else {}
+    weekly = candidate.get("weekly") if isinstance(candidate.get("weekly"), dict) else {}
+    return {
+        "daily": {
+            "enabled": bool(daily.get("enabled", defaults["daily"]["enabled"])),
+            "time_local": _normalize_hhmm(daily.get("time_local", defaults["daily"]["time_local"])),
+            "last_run_date_local": str(daily.get("last_run_date_local", "") or ""),
+        },
+        "weekly": {
+            "enabled": bool(weekly.get("enabled", defaults["weekly"]["enabled"])),
+            "weekday": max(0, min(6, int(weekly.get("weekday", defaults["weekly"]["weekday"])))),
+            "time_local": _normalize_hhmm(weekly.get("time_local", defaults["weekly"]["time_local"])),
+            "last_run_key_local": str(weekly.get("last_run_key_local", "") or ""),
+        },
+        "updated_ts_utc": str(candidate.get("updated_ts_utc", "") or ""),
+    }
+
+
+def _load_restart_schedule_from_config() -> dict[str, Any]:
+    config = _load_config()
+    root = config.get("server_control", {}) if isinstance(config.get("server_control"), dict) else {}
+    schedule = _normalize_restart_schedule(root.get("restart_schedule"))
+    return schedule
+
+
+def _save_restart_schedule_to_config(schedule: dict[str, Any]) -> dict[str, Any]:
+    config = _load_config()
+    root = config.get("server_control")
+    if not isinstance(root, dict):
+        root = {}
+    normalized = _normalize_restart_schedule(schedule)
+    normalized["updated_ts_utc"] = _utc_now()
+    root["restart_schedule"] = normalized
+    config["server_control"] = root
+    _save_config(config)
+    return normalized
+
+
+class RestartScheduleRunner:
+    """Check daily/weekly reboot schedules and queue planned reboot actions."""
+
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._last_error = ""
+        self._last_tick_local = ""
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="restart-schedule-runner")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
+        self._thread = None
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "running": bool(self._thread and self._thread.is_alive()),
+                "last_error": self._last_error,
+                "last_tick_local": self._last_tick_local,
+            }
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                schedule = _load_restart_schedule_from_config()
+                now_local = datetime.now()
+                with self._lock:
+                    self._last_tick_local = now_local.strftime("%Y-%m-%d %H:%M:%S")
+                    self._last_error = ""
+
+                daily = schedule.get("daily", {})
+                daily_time = _normalize_hhmm(daily.get("time_local", "04:00"))
+                daily_hour = int(daily_time[:2])
+                daily_minute = int(daily_time[3:])
+                today_key = now_local.strftime("%Y-%m-%d")
+                should_run_daily = (
+                    bool(daily.get("enabled", False))
+                    and now_local.hour == daily_hour
+                    and now_local.minute == daily_minute
+                    and str(daily.get("last_run_date_local", "")) != today_key
+                )
+                if should_run_daily:
+                    _schedule_server_action(
+                        action=SERVER_ACTION_REBOOT,
+                        delay_seconds=SERVER_CONTROL_DEFAULT_DELAY_SECONDS,
+                        reason="scheduled_daily",
+                        trigger="restart_schedule_runner",
+                    )
+                    daily["last_run_date_local"] = today_key
+                    schedule["daily"] = daily
+                    _save_restart_schedule_to_config(schedule)
+
+                weekly = schedule.get("weekly", {})
+                weekly_time = _normalize_hhmm(weekly.get("time_local", "04:00"))
+                weekly_hour = int(weekly_time[:2])
+                weekly_minute = int(weekly_time[3:])
+                weekly_key = f"{now_local.strftime('%Y-%U')}-{now_local.weekday()}"
+                should_run_weekly = (
+                    bool(weekly.get("enabled", False))
+                    and int(weekly.get("weekday", 0)) == int(now_local.weekday())
+                    and now_local.hour == weekly_hour
+                    and now_local.minute == weekly_minute
+                    and str(weekly.get("last_run_key_local", "")) != weekly_key
+                )
+                if should_run_weekly:
+                    _schedule_server_action(
+                        action=SERVER_ACTION_REBOOT,
+                        delay_seconds=SERVER_CONTROL_DEFAULT_DELAY_SECONDS,
+                        reason="scheduled_weekly",
+                        trigger="restart_schedule_runner",
+                    )
+                    weekly["last_run_key_local"] = weekly_key
+                    schedule["weekly"] = weekly
+                    _save_restart_schedule_to_config(schedule)
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = f"{type(exc).__name__}: {exc}"
+            time.sleep(20)
 
 
 def _is_placeholder_text(value: Any) -> bool:
@@ -419,6 +1340,9 @@ def _validate_sensitive_runtime_config(config: dict[str, Any]) -> None:
     auth_enabled = bool(auth_cfg.get("enabled", False))
     if auth_enabled and not _is_strong_secret(auth_cfg.get("session_secret"), min_length=24):
         errors.append("auth.enabled=true requires auth.session_secret (non-placeholder, at least 24 characters).")
+    admin_token = str(auth_cfg.get("admin_token", "")).strip()
+    if auth_enabled and admin_token and _is_placeholder_text(admin_token):
+        errors.append("auth.admin_token is set but still looks like a placeholder.")
 
     camera_control_enabled = bool(camera_control_cfg.get("enabled", False))
     if camera_control_enabled:
@@ -493,6 +1417,11 @@ def _normalize_recording_sort(value: Any) -> str:
     return key if key in {"newest", "oldest", "largest", "smallest", "name"} else "newest"
 
 
+def _normalize_retention_queue_filter(value: Any) -> str:
+    key = str(value or "all").strip().lower()
+    return key if key in {"all", "next", "last"} else "all"
+
+
 def _load_all_events_from_sqlite(db_path: Path) -> list[dict[str, Any]]:
     """Load all events from SQLite for API-side filtering and pagination."""
     connection = sqlite3.connect(str(db_path))
@@ -515,6 +1444,8 @@ def _load_all_events_from_sqlite(db_path: Path) -> list[dict[str, Any]]:
         for row in rows:
             snapshot = row["snapshot_path"]
             clip = row["clip_path"]
+            snapshot_abs = _resolve_media_ref_path(ROOT, snapshot)
+            clip_abs = _resolve_media_ref_path(ROOT, clip)
             events.append(
                 {
                     "id": int(row["id"]),
@@ -526,8 +1457,8 @@ def _load_all_events_from_sqlite(db_path: Path) -> list[dict[str, Any]]:
                     "class_id": row["class_id"],
                     "snapshot": snapshot,
                     "clip": clip,
-                    "has_snapshot": bool(str(snapshot or "").strip()),
-                    "has_clip": bool(str(clip or "").strip()),
+                    "has_snapshot": bool(snapshot_abs is not None and snapshot_abs.exists() and snapshot_abs.is_file()),
+                    "has_clip": bool(clip_abs is not None and clip_abs.exists() and clip_abs.is_file()),
                     "review_state": row["review_state"],
                     "share_state": row["share_state"],
                     "deletion_state": row["deletion_state"],
@@ -609,6 +1540,7 @@ def _events_query_payload(
     severity: str,
     media: str,
     range_key: str,
+    retention_queue: str,
 ) -> dict[str, Any]:
     """Return filtered/paginated events payload with stable metadata contract."""
     limit = max(1, min(200, int(limit)))
@@ -617,6 +1549,7 @@ def _events_query_payload(
     severity_filter = _normalize_event_severity_filter(severity)
     media_filter = _normalize_event_media_filter(media)
     normalized_range = _normalize_range_key(range_key)
+    normalized_retention_queue = _normalize_retention_queue_filter(retention_queue)
     range_seconds = _range_seconds_from_key(normalized_range)
 
     if SQLITE_DB_PATH is not None and SQLITE_DB_PATH.exists():
@@ -628,6 +1561,7 @@ def _events_query_payload(
     filtered = [
         event
         for event in all_events
+        if str(event.get("lifecycle_state", "")).strip().lower() not in {"deleted", "expired"}
         if _event_matches_filters(
             event,
             query_text=query_text,
@@ -637,6 +1571,31 @@ def _events_query_payload(
             now_utc=now_utc,
         )
     ]
+
+    for event in filtered:
+        delete_after_ts = _parse_utc(event.get("delete_after_ts_utc"))
+        if delete_after_ts is None:
+            event["delete_after_seconds_remaining"] = None
+            continue
+        remaining = (delete_after_ts - now_utc).total_seconds()
+        event["delete_after_seconds_remaining"] = max(0, int(round(remaining)))
+
+    if normalized_retention_queue == "next":
+        filtered.sort(
+            key=lambda event: (
+                event.get("delete_after_seconds_remaining") is None,
+                int(event.get("delete_after_seconds_remaining") or 0),
+                -int(event.get("id") or 0),
+            )
+        )
+    elif normalized_retention_queue == "last":
+        filtered.sort(
+            key=lambda event: (
+                event.get("delete_after_seconds_remaining") is None,
+                -int(event.get("delete_after_seconds_remaining") or 0),
+                -int(event.get("id") or 0),
+            )
+        )
 
     total = len(filtered)
     page_items = filtered[offset : offset + limit]
@@ -658,17 +1617,126 @@ def _events_query_payload(
             "severity": severity_filter,
             "media": media_filter,
             "range": normalized_range,
+            "retention_queue": normalized_retention_queue,
         },
     }
 
 
-def _recording_item_from_path(path: Path, *, stat: os.stat_result | None = None) -> dict[str, Any]:
+def _recording_snapshot_index() -> dict[str, str]:
+    """Map clip filename -> snapshot URL using event linkage in SQLite."""
+    if SQLITE_DB_PATH is None or not SQLITE_DB_PATH.exists():
+        return {}
+    connection = sqlite3.connect(str(SQLITE_DB_PATH))
+    connection.row_factory = sqlite3.Row
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT clip_path, snapshot_path
+            FROM event_records
+            WHERE clip_path IS NOT NULL AND TRIM(clip_path) != ''
+              AND snapshot_path IS NOT NULL AND TRIM(snapshot_path) != ''
+              AND lifecycle_state NOT IN ('deleted', 'expired');
+            """
+        )
+        rows = cursor.fetchall()
+    finally:
+        connection.close()
+
+    index: dict[str, str] = {}
+    for row in rows:
+        clip_ref = str(row["clip_path"] or "").replace("\\", "/").strip()
+        snapshot_ref = str(row["snapshot_path"] or "").replace("\\", "/").strip()
+        if not clip_ref or not snapshot_ref:
+            continue
+        clip_name = Path(clip_ref).name
+        snapshot_name = Path(snapshot_ref).name
+        if clip_name and snapshot_name:
+            index[clip_name] = f"/snapshots/{snapshot_name}"
+    return index
+
+
+def _ensure_recording_thumbnail(recording_name: str) -> str:
+    """Return a snapshot URL for one recording, generating a sidecar thumbnail when missing."""
+    name = str(recording_name or "").strip()
+    if not name:
+        return ""
+    recording_abs = RECORDINGS_DIR / name
+    if not recording_abs.exists() or not recording_abs.is_file():
+        return ""
+
+    stem = Path(name).stem
+    snapshot_name = f"recording_{stem}.jpg"
+    snapshot_abs = SNAPSHOT_DIR / snapshot_name
+    if snapshot_abs.exists() and snapshot_abs.is_file():
+        return f"/snapshots/{snapshot_name}"
+
+    ffmpeg_bin = _resolve_ffmpeg_binary()
+    command = [
+        ffmpeg_bin,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        "0",
+        "-i",
+        str(recording_abs),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        str(snapshot_abs),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError, TimeoutError):
+        return ""
+    if completed.returncode != 0 or not snapshot_abs.exists():
+        try:
+            if snapshot_abs.exists():
+                snapshot_abs.unlink()
+        except OSError:
+            pass
+        return ""
+    return f"/snapshots/{snapshot_name}"
+
+
+def _recording_item_from_path(
+    path: Path,
+    *,
+    stat: os.stat_result | None = None,
+    snapshot_index: dict[str, str] | None = None,
+) -> dict[str, Any]:
     current_stat = stat if stat is not None else path.stat()
+    name = path.name
+    source_event_id: int | None = None
+    match = re.match(r"^event_(\d+)_", name)
+    if match:
+        try:
+            source_event_id = int(match.group(1))
+        except ValueError:
+            source_event_id = None
+    clip_type = "manual_clip" if name.startswith("manual_clip_") else ("event_clip" if source_event_id is not None else "recording")
+    snapshot_url = ""
+    if snapshot_index is not None:
+        snapshot_url = str(snapshot_index.get(name, "") or "")
+    if not snapshot_url:
+        snapshot_url = _ensure_recording_thumbnail(name)
     return {
-        "name": path.name,
+        "name": name,
         "size_bytes": current_stat.st_size,
         "modified_epoch": current_stat.st_mtime,
-        "url": f"/recordings/{path.name}",
+        "url": f"/recordings/{name}",
+        "snapshot_url": snapshot_url,
+        "source_event_id": source_event_id,
+        "clip_type": clip_type,
     }
 
 
@@ -723,7 +1791,8 @@ def _recordings_query_payload(
 
     total = len(filtered)
     page_entries = filtered[offset : offset + limit]
-    items = [_recording_item_from_path(path, stat=stat) for path, stat in page_entries]
+    snapshot_index = _recording_snapshot_index()
+    items = [_recording_item_from_path(path, stat=stat, snapshot_index=snapshot_index) for path, stat in page_entries]
     pages = max(1, (total + limit - 1) // limit)
     page = min(pages, max(1, (offset // limit) + 1))
     return {
@@ -777,17 +1846,24 @@ def _list_recordings(limit: int) -> list[dict[str, Any]]:
 
 def _list_logs() -> list[str]:
     """List available runtime log files."""
-    return sorted(
-        [
-            p.name
-            for p in LOGS_DIR.glob("*")
-            if p.is_file() and not p.name.startswith(".")
-        ]
-    )
+    entries: list[tuple[float, str]] = []
+    for path in LOGS_DIR.glob("*"):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        try:
+            modified = float(path.stat().st_mtime)
+        except OSError:
+            continue
+        entries.append((modified, path.name))
+    entries.sort(key=lambda row: (row[0], row[1].lower()), reverse=True)
+    return [name for _, name in entries]
 
 
 def _tail_file(path: Path, lines: int) -> str:
     """Return the trailing lines from a text log file."""
+    if int(lines) <= 0:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return f.read()
     dq: deque[str] = deque(maxlen=lines)
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -882,6 +1958,368 @@ def _resolve_camera_profile_automation_settings(config: dict[str, Any]) -> dict[
     }
 
 
+def _resolve_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve optional system-dispatch settings for restart and camera-link notifications."""
+    root = dict(config.get("dispatches") or {})
+    restart_cfg = dict(root.get("restart") or root.get("backend_restart") or {})
+    camera_cfg = dict(root.get("camera_disconnect") or {})
+    return {
+        "enabled": bool(root.get("enabled", True)),
+        "restart": {
+            "planned_enabled": bool(restart_cfg.get("planned_enabled", True)),
+            "unexpected_enabled": bool(restart_cfg.get("unexpected_enabled", True)),
+            "cooldown_seconds": max(30, int(restart_cfg.get("cooldown_seconds", 180))),
+        },
+        "camera_disconnect": {
+            "enabled": bool(camera_cfg.get("enabled", True)),
+            "recovery_enabled": bool(camera_cfg.get("recovery_enabled", True)),
+            "cooldown_seconds": max(30, int(camera_cfg.get("cooldown_seconds", 180))),
+        },
+    }
+
+
+def _queue_system_dispatch(
+    *,
+    kind: str,
+    title: str,
+    summary: str,
+    severity: str = "info",
+    metadata: dict[str, Any] | None = None,
+    include_snapshot: bool = False,
+    include_clip: bool = False,
+    selected_clip_path: str | None = None,
+    max_attempts: int = 2,
+) -> dict[str, Any]:
+    """Queue or inline-dispatch one system notification through configured alert channels."""
+    payload = {
+        "kind": str(kind or "system_notice"),
+        "title": str(title or "LAN CAM Notice"),
+        "summary": str(summary or ""),
+        "severity": str(severity or "info").strip().lower() or "info",
+        "metadata": dict(metadata or {}),
+        "include_snapshot": bool(include_snapshot),
+        "include_clip": bool(include_clip),
+        "selected_clip_path": str(selected_clip_path or "").strip(),
+        "ts_utc": _utc_now(),
+    }
+    if SQLITE_DB_PATH is not None and JOB_RUNNER is not None:
+        try:
+            job_id = enqueue_background_job(
+                SQLITE_DB_PATH,
+                "dispatch_system_notification",
+                payload=payload,
+                max_attempts=max(1, int(max_attempts)),
+            )
+            return {"queued": True, "job_id": int(job_id)}
+        except Exception as exc:
+            LOGGER.warning("System dispatch enqueue failed; falling back inline. error=%s", exc)
+
+    try:
+        config = _load_config()
+        alerts_cfg = config.get("alerts", {})
+        access_links = _resolve_alert_access_links(alerts_cfg, api_cfg=config.get("api", {}))
+        result = _dispatch_system_notification_payload(
+            payload,
+            alerts_cfg,
+            root=ROOT,
+            access_links=access_links,
+        )
+        return {"queued": False, "result": result}
+    except Exception as exc:
+        return {"queued": False, "result": {"sent": False, "reason": f"inline_dispatch_failed:{type(exc).__name__}"}}
+
+
+def _dispatch_restart_state_notification(
+    *,
+    classification: str,
+    reason: str,
+    trigger: str,
+    action: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Dispatch planned/unexpected restart notification according to runtime dispatch settings."""
+    try:
+        config = _load_config()
+    except Exception:
+        return
+    dispatch_cfg = _resolve_dispatch_settings(config)
+    if not bool(dispatch_cfg.get("enabled", True)):
+        return
+
+    restart_cfg = dict(dispatch_cfg.get("restart") or {})
+    normalized_class = str(classification or "").strip().lower()
+    if normalized_class == "planned":
+        if not bool(restart_cfg.get("planned_enabled", True)):
+            return
+    elif normalized_class == "unexpected":
+        if not bool(restart_cfg.get("unexpected_enabled", True)):
+            return
+    else:
+        return
+
+    dedupe_key = "|".join(
+        [
+            normalized_class,
+            str(action or "").strip().lower(),
+            str(reason or "").strip().lower(),
+            str(trigger or "").strip().lower(),
+        ]
+    )
+    cooldown_seconds = max(30, int(restart_cfg.get("cooldown_seconds", 180)))
+    with SYSTEM_DISPATCH_STATE_LOCK:
+        last_key = str(SYSTEM_DISPATCH_STATE.get("last_restart_key", ""))
+        last_ts = SYSTEM_DISPATCH_STATE.get("last_restart_dispatch_ts_utc")
+        if dedupe_key == last_key and _seconds_since_utc(last_ts) < float(cooldown_seconds):
+            return
+        SYSTEM_DISPATCH_STATE["last_restart_key"] = dedupe_key
+        SYSTEM_DISPATCH_STATE["last_restart_dispatch_ts_utc"] = _utc_now()
+
+    title = "Server restart detected" if normalized_class == "planned" else "Server unexpected restart/outage detected"
+    summary = (
+        f"classification={normalized_class} action={str(action or 'startup')} "
+        f"reason={str(reason or 'unknown')} trigger={str(trigger or 'startup')}"
+    )
+    _queue_system_dispatch(
+        kind="server_restart",
+        title=title,
+        summary=summary,
+        severity="warning" if normalized_class == "unexpected" else "info",
+        metadata={
+            "classification": normalized_class,
+            "reason": str(reason or ""),
+            "trigger": str(trigger or ""),
+            "action": str(action or ""),
+            "details": dict(metadata or {}),
+        },
+    )
+
+
+def _record_camera_connectivity_observation(
+    *,
+    connected: bool,
+    control: dict[str, Any],
+    reason: str = "",
+    metadata: dict[str, Any] | None = None,
+    source: str = "control_status",
+) -> None:
+    """Track camera online/offline transitions and dispatch notifications with cooldown."""
+    try:
+        config = _load_config()
+    except Exception:
+        return
+    dispatch_cfg = _resolve_dispatch_settings(config)
+    camera_cfg = dict(dispatch_cfg.get("camera_disconnect") or {})
+    if not bool(dispatch_cfg.get("enabled", True)) or not bool(camera_cfg.get("enabled", True)):
+        with SYSTEM_DISPATCH_STATE_LOCK:
+            SYSTEM_DISPATCH_STATE["camera_offline"] = (not bool(connected))
+            SYSTEM_DISPATCH_STATE["camera_last_state_change_ts_utc"] = _utc_now()
+        return
+
+    now_utc = _utc_now()
+    expected_reboot_active = False
+    expected_reboot_reason = ""
+    became_offline = False
+    became_online = False
+    source_key = str(source or "control_status").strip().lower() or "control_status"
+    with SYSTEM_DISPATCH_STATE_LOCK:
+        expected_until_raw = SYSTEM_DISPATCH_STATE.get("camera_expected_reboot_until_ts_utc")
+        expected_until = _parse_utc(expected_until_raw)
+        if expected_until is not None and expected_until > datetime.now(timezone.utc):
+            expected_reboot_active = True
+            expected_reboot_reason = (
+                str(SYSTEM_DISPATCH_STATE.get("camera_expected_reboot_reason", "")).strip()
+                or "camera_reboot_requested"
+            )
+        elif str(expected_until_raw or "").strip():
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_until_ts_utc"] = ""
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_reason"] = ""
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_delay_ms"] = 0
+
+        source_states_raw = SYSTEM_DISPATCH_STATE.get("camera_source_states")
+        source_states: dict[str, bool] = (
+            dict(source_states_raw) if isinstance(source_states_raw, dict) else {}
+        )
+        source_states[source_key] = bool(connected)
+        SYSTEM_DISPATCH_STATE["camera_source_states"] = source_states
+
+        previous = SYSTEM_DISPATCH_STATE.get("camera_offline")
+        prev_offline = bool(previous) if previous is not None else None
+        now_offline = any(not bool(value) for value in source_states.values())
+        if prev_offline is None:
+            SYSTEM_DISPATCH_STATE["camera_offline"] = now_offline
+            SYSTEM_DISPATCH_STATE["camera_last_state_change_ts_utc"] = now_utc
+            became_offline = now_offline
+        elif prev_offline != now_offline:
+            SYSTEM_DISPATCH_STATE["camera_offline"] = now_offline
+            SYSTEM_DISPATCH_STATE["camera_last_state_change_ts_utc"] = now_utc
+            became_offline = now_offline
+            became_online = not now_offline
+
+    cooldown_seconds = max(30, int(camera_cfg.get("cooldown_seconds", 180)))
+    if became_offline:
+        if expected_reboot_active:
+            with SYSTEM_DISPATCH_STATE_LOCK:
+                SYSTEM_DISPATCH_STATE["camera_last_disconnect_dispatch_ts_utc"] = now_utc
+            _queue_system_dispatch(
+                kind="camera_rebooting",
+                title="Camera restarting",
+                summary=(
+                    f"Camera restart in progress via {source_key}. "
+                    f"Reason: {expected_reboot_reason}."
+                ),
+                severity="info",
+                metadata={
+                    "base_url": str(control.get("base_url", "")),
+                    "reason": str(reason or "camera_reboot_in_progress"),
+                    "expected_reboot_reason": expected_reboot_reason,
+                    "source": source_key,
+                    "details": dict(metadata or {}),
+                },
+            )
+            return
+
+        media_bundle = _capture_camera_disconnect_media(
+            seconds=10,
+            reason=str(reason or "unavailable"),
+            source=source_key,
+        )
+        merged_metadata = {
+            "base_url": str(control.get("base_url", "")),
+            "reason": str(reason or ""),
+            "source": source_key,
+            "details": dict(metadata or {}),
+            "media": media_bundle,
+        }
+        if str(media_bundle.get("snapshot", "")).strip():
+            merged_metadata["snapshot"] = str(media_bundle.get("snapshot", "")).strip()
+        if str(media_bundle.get("clip", "")).strip():
+            merged_metadata["clip"] = str(media_bundle.get("clip", "")).strip()
+
+        with SYSTEM_DISPATCH_STATE_LOCK:
+            last_ts = SYSTEM_DISPATCH_STATE.get("camera_last_disconnect_dispatch_ts_utc")
+            if _seconds_since_utc(last_ts) < float(cooldown_seconds):
+                return
+            SYSTEM_DISPATCH_STATE["camera_last_disconnect_dispatch_ts_utc"] = now_utc
+        _queue_system_dispatch(
+            kind="camera_disconnect",
+            title="Camera connection lost",
+            summary=(
+                f"Camera connectivity lost via {source_key} "
+                f"({str(reason or 'unavailable')})."
+            ),
+            severity="warning",
+            metadata=merged_metadata,
+            include_snapshot=bool(str(media_bundle.get("snapshot", "")).strip()),
+            include_clip=bool(str(media_bundle.get("clip", "")).strip()),
+            selected_clip_path=str(media_bundle.get("clip", "")).strip() or None,
+        )
+        return
+
+    if became_online and bool(camera_cfg.get("recovery_enabled", True)):
+        with SYSTEM_DISPATCH_STATE_LOCK:
+            if expected_reboot_active:
+                SYSTEM_DISPATCH_STATE["camera_expected_reboot_until_ts_utc"] = ""
+                SYSTEM_DISPATCH_STATE["camera_expected_reboot_reason"] = ""
+                SYSTEM_DISPATCH_STATE["camera_expected_reboot_delay_ms"] = 0
+            last_ts = SYSTEM_DISPATCH_STATE.get("camera_last_recovery_dispatch_ts_utc")
+            if _seconds_since_utc(last_ts) < float(cooldown_seconds):
+                return
+            SYSTEM_DISPATCH_STATE["camera_last_recovery_dispatch_ts_utc"] = now_utc
+        _queue_system_dispatch(
+            kind="camera_recovered",
+            title="Camera restart complete" if expected_reboot_active else "Camera connection restored",
+            summary=(
+                f"Camera connectivity recovered via {source_key}; "
+                + ("camera restart cycle completed." if expected_reboot_active else "stream/control link is reachable again.")
+            ),
+            severity="info",
+            metadata={
+                "base_url": str(control.get("base_url", "")),
+                "reason": str(reason or "status_ok"),
+                "source": source_key,
+                "expected_reboot_reason": expected_reboot_reason if expected_reboot_active else "",
+                "details": dict(metadata or {}),
+            },
+        )
+
+
+def _capture_camera_disconnect_media(
+    *,
+    seconds: int = 10,
+    reason: str = "",
+    source: str = "camera",
+) -> dict[str, Any]:
+    """Persist a short lookback clip/snapshot at camera-down transition for forensics."""
+    window_seconds = max(5, min(int(seconds), 30))
+    frames = ingest_service.get_recent_frames(float(window_seconds))
+    if not frames:
+        return {
+            "ok": False,
+            "window_seconds": window_seconds,
+            "written_frames": 0,
+            "snapshot": "",
+            "clip": "",
+            "event_id": None,
+            "reason": "no_recent_frames",
+        }
+
+    fps = 8.0
+    try:
+        ingest_cfg = dict((_load_config().get("ingest") or {}))
+        fps = min(12.0, max(2.0, float(ingest_cfg.get("output_fps", 10.0))))
+    except Exception:
+        fps = 8.0
+
+    clip_abs, clip_rel = _new_recording_path(prefix=f"camera_down_{window_seconds}s")
+    write_result = _write_clip_from_frames(frames=frames, output_abs_path=clip_abs, fps=fps)
+    if not bool(write_result.get("ok", False)):
+        return {
+            "ok": False,
+            "window_seconds": window_seconds,
+            "written_frames": int(write_result.get("written_frames", 0)),
+            "snapshot": "",
+            "clip": "",
+            "event_id": None,
+            "reason": str(write_result.get("error", "clip_write_failed")),
+        }
+
+    snapshot_abs, snapshot_rel = _new_snapshot_path(prefix="camera_down")
+    try:
+        cv2.imwrite(str(snapshot_abs), frames[-1][1])
+    except Exception:
+        snapshot_rel = ""
+
+    event_id: int | None = None
+    if SQLITE_DB_PATH is not None:
+        try:
+            note = f"source={source};reason={reason};lookback_seconds={window_seconds}"
+            event_payload = {
+                "ts_utc": _utc_now(),
+                "label": "camera_disconnect",
+                "confidence": 1.0,
+                "snapshot": snapshot_rel,
+                "clip": clip_rel,
+                "review_state": "unreviewed",
+                "share_state": "not_shared",
+                "deletion_state": "present",
+                "lifecycle_state": "media_attached",
+                "notes": note,
+            }
+            event_id = insert_event_record(SQLITE_DB_PATH, event_payload, event_type="camera_disconnect")
+        except Exception:
+            event_id = None
+
+    return {
+        "ok": True,
+        "window_seconds": window_seconds,
+        "written_frames": int(write_result.get("written_frames", 0)),
+        "snapshot": snapshot_rel,
+        "clip": clip_rel,
+        "event_id": event_id,
+        "reason": "captured",
+    }
+
+
 def _redact_token_query(url: str) -> str:
     """Return URL text with token query values redacted for UI/debug payloads."""
     parsed = urlparse(url)
@@ -932,7 +2370,7 @@ def _camera_control_proxy_call(
     if params:
         url = f"{url}?{urlencode(params)}"
     timeout_seconds = max(1, min(int(control.get("timeout_seconds", 4)), 30))
-    request = Request(url=url, method=method, headers=headers)
+    request = UrlRequest(url=url, method=method, headers=headers)
 
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
@@ -1447,6 +2885,48 @@ def _is_ingest_healthy() -> bool:
     )
 
 
+def _monitor_ingest_connectivity_transition() -> None:
+    """Observe ingest stream health and feed camera disconnect/recovery dispatch state."""
+    try:
+        config = _load_config()
+    except Exception:
+        return
+    control = _resolve_camera_control_settings(config)
+    status = ingest_service.status()
+    frame_count = int(status.get("frame_count", 0) or 0)
+    last_age = status.get("last_frame_age_seconds")
+    with SYSTEM_DISPATCH_STATE_LOCK:
+        source_states_raw = SYSTEM_DISPATCH_STATE.get("camera_source_states")
+        source_states = dict(source_states_raw) if isinstance(source_states_raw, dict) else {}
+        prior_ingest_state = source_states.get("ingest_stream")
+    connected = bool(
+        status.get("running")
+        and status.get("capture_open")
+        and not bool(status.get("stale"))
+    )
+    # Avoid a false "camera down" alert during backend startup before first frame.
+    if prior_ingest_state is None and not connected and frame_count <= 0 and last_age is None:
+        return
+    if connected:
+        reason = "ingest_ok"
+    else:
+        failures: list[str] = []
+        if not bool(status.get("running")):
+            failures.append("ingest_not_running")
+        if not bool(status.get("capture_open")):
+            failures.append("capture_closed")
+        if bool(status.get("stale")):
+            failures.append("stale_frames")
+        reason = ",".join(failures) if failures else "ingest_unavailable"
+    _record_camera_connectivity_observation(
+        connected=connected,
+        control=control,
+        reason=reason,
+        metadata={"ingest_status": status},
+        source="ingest_stream",
+    )
+
+
 def _adaptive_score_from_luma(luma: float | None) -> float:
     if luma is None:
         return -9999.0
@@ -1583,13 +3063,21 @@ def _send_webhook_alert(event: dict[str, Any], alerts_cfg: dict[str, Any]) -> di
         return {"sent": False, "reason": "webhook_url_empty"}
 
     timeout_seconds = max(1, int(alerts_cfg.get("timeout_seconds", 6)))
-    text = (
-        f"Doorbell event: {event.get('label')} "
-        f"(conf {event.get('confidence')}) at {event.get('ts_utc')}"
-    )
-    payload = {"text": text, "event": event}
+    dispatch_type = str(event.get("dispatch_type", "event")).strip().lower()
+    if dispatch_type == "system":
+        text = (
+            f"LAN CAM system notification: {event.get('label')} "
+            f"at {event.get('ts_utc')} - {event.get('message')}"
+        )
+        payload = {"text": text, "notification": event, "event": event}
+    else:
+        text = (
+            f"Doorbell event: {event.get('label')} "
+            f"(conf {event.get('confidence')}) at {event.get('ts_utc')}"
+        )
+        payload = {"text": text, "event": event}
     body = json.dumps(payload).encode("utf-8")
-    request = Request(
+    request = UrlRequest(
         webhook_url,
         data=body,
         headers={"Content-Type": "application/json"},
@@ -1783,22 +3271,44 @@ def _send_smtp_alert(
     if not username or not password:
         return {"sent": False, "reason": "smtp_credentials_empty"}
 
-    severity_level = str(event.get("severity_level", "unknown")).upper()
-    label = str(event.get("label", "unknown")).strip() or "unknown"
-    subject = f"{subject_prefix}: {label} [{severity_level}]"
-    text_lines = [
-        "Doorbell event detected.",
-        "",
-        f"event_id: {event.get('id')}",
-        f"timestamp_utc: {event.get('ts_utc')}",
-        f"label: {event.get('label')}",
-        f"confidence: {event.get('confidence')}",
-        f"severity_level: {event.get('severity_level')}",
-        f"severity_score: {event.get('severity_score')}",
-        f"lifecycle_state: {event.get('lifecycle_state')}",
-        f"snapshot_ref: {event.get('snapshot')}",
-        f"clip_ref: {event.get('clip')}",
-    ]
+    dispatch_type = str(event.get("dispatch_type", "event")).strip().lower()
+    if dispatch_type == "system":
+        severity_level = str(event.get("severity_level", "info")).upper()
+        label = str(event.get("label", "System Notification")).strip() or "System Notification"
+        subject = f"{subject_prefix}: {label} [{severity_level}]"
+        text_lines = [
+            "LAN CAM system notification.",
+            "",
+            f"type: {event.get('kind')}",
+            f"timestamp_utc: {event.get('ts_utc')}",
+            f"severity_level: {severity_level}",
+            f"summary: {event.get('message')}",
+        ]
+        metadata = event.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            text_lines.extend(["", "metadata:"])
+            try:
+                metadata_text = json.dumps(metadata, indent=2, sort_keys=True)
+            except (TypeError, ValueError):
+                metadata_text = str(metadata)
+            text_lines.append(metadata_text)
+    else:
+        severity_level = str(event.get("severity_level", "unknown")).upper()
+        label = str(event.get("label", "unknown")).strip() or "unknown"
+        subject = f"{subject_prefix}: {label} [{severity_level}]"
+        text_lines = [
+            "Doorbell event detected.",
+            "",
+            f"event_id: {event.get('id')}",
+            f"timestamp_utc: {event.get('ts_utc')}",
+            f"label: {event.get('label')}",
+            f"confidence: {event.get('confidence')}",
+            f"severity_level: {event.get('severity_level')}",
+            f"severity_score: {event.get('severity_score')}",
+            f"lifecycle_state: {event.get('lifecycle_state')}",
+            f"snapshot_ref: {event.get('snapshot')}",
+            f"clip_ref: {event.get('clip')}",
+        ]
     link_values = dict(access_links or {})
     local_url = str(link_values.get("local_url", "")).strip()
     tailscale_url = str(link_values.get("tailscale_url", "")).strip()
@@ -1920,6 +3430,52 @@ def _dispatch_alert_channels(
     }
 
 
+def _dispatch_system_notification_payload(
+    payload: dict[str, Any],
+    alerts_cfg: dict[str, Any],
+    *,
+    root: Path,
+    access_links: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Dispatch one generic system notification through configured alert channels."""
+    ts_utc = str(payload.get("ts_utc", "")).strip() or _utc_now()
+    title = str(payload.get("title", "")).strip() or "LAN CAM Notice"
+    summary = str(payload.get("summary", "")).strip()
+    severity = str(payload.get("severity", "info")).strip().lower() or "info"
+    kind = str(payload.get("kind", "system_notice")).strip().lower() or "system_notice"
+    metadata = payload.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    snapshot_ref = str(metadata_dict.get("snapshot", "") or "").strip()
+    clip_ref = str(metadata_dict.get("clip", "") or "").strip()
+    include_snapshot = bool(payload.get("include_snapshot", False))
+    include_clip = bool(payload.get("include_clip", False))
+    selected_clip_path = str(payload.get("selected_clip_path", "") or "").strip() or None
+    event = {
+        "id": f"sys_{kind}_{int(time.time())}",
+        "ts_utc": ts_utc,
+        "label": title,
+        "confidence": None,
+        "severity_level": severity.upper(),
+        "severity_score": 1.0 if severity in {"critical", "error"} else (0.7 if severity == "warning" else 0.4),
+        "lifecycle_state": "system_notification",
+        "snapshot": snapshot_ref,
+        "clip": clip_ref,
+        "dispatch_type": "system",
+        "kind": kind,
+        "message": summary,
+        "metadata": metadata_dict,
+    }
+    return _dispatch_alert_channels(
+        event,
+        alerts_cfg,
+        root=root,
+        access_links=access_links,
+        include_snapshot=include_snapshot,
+        include_clip=include_clip,
+        selected_clip_path=selected_clip_path,
+    )
+
+
 class BackgroundJobRunner:
     """Run queued background jobs in one backend-managed worker thread."""
 
@@ -1931,15 +3487,24 @@ class BackgroundJobRunner:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._worker_name = "backend-main-worker"
+        self._last_auto_retention_cull_monotonic = 0.0
 
     def _load_job_settings(self) -> dict[str, Any]:
-        cfg = _load_config().get("jobs", {})
+        config = _load_config()
+        cfg = config.get("jobs", {})
+        retention_cfg = config.get("retention", {}) if isinstance(config.get("retention"), dict) else {}
         return {
             "enabled": bool(cfg.get("enabled", True)),
             "poll_interval_seconds": max(0.2, float(cfg.get("poll_interval_seconds", 2.0))),
             "retry_delay_seconds": max(1, int(cfg.get("retry_delay_seconds", 10))),
             "stale_running_seconds": max(10, int(cfg.get("stale_running_seconds", 300))),
             "sample_limit": max(1, min(int(cfg.get("sample_limit", 100)), 1000)),
+            "auto_retention_cull_enabled": bool(retention_cfg.get("auto_cull_enabled", True)),
+            "auto_retention_cull_interval_seconds": max(
+                15,
+                int(retention_cfg.get("auto_cull_interval_seconds", 60)),
+            ),
+            "auto_retention_cull_delete_files": bool(retention_cfg.get("auto_cull_apply_file_delete", True)),
         }
 
     def start(self) -> None:
@@ -1972,6 +3537,30 @@ class BackgroundJobRunner:
             if not bool(settings["enabled"]):
                 time.sleep(1.0)
                 continue
+
+            try:
+                _monitor_ingest_connectivity_transition()
+            except Exception as exc:
+                LOGGER.debug("Ingest connectivity monitor skipped: %s: %s", type(exc).__name__, exc)
+
+            now_mono = time.monotonic()
+            auto_cull_due = (
+                bool(settings.get("auto_retention_cull_enabled", True))
+                and (now_mono - self._last_auto_retention_cull_monotonic)
+                >= float(settings.get("auto_retention_cull_interval_seconds", 60))
+            )
+            if auto_cull_due:
+                try:
+                    run_retention_cull(
+                        self._db_path,
+                        self._root,
+                        apply_file_delete=bool(settings.get("auto_retention_cull_delete_files", True)),
+                        sample_limit=int(settings.get("sample_limit", 100)),
+                    )
+                except Exception as exc:
+                    LOGGER.warning("Auto retention cull failed: %s: %s", type(exc).__name__, exc)
+                finally:
+                    self._last_auto_retention_cull_monotonic = now_mono
 
             job = claim_next_background_job(self._db_path, worker_name=self._worker_name)
             if job is None:
@@ -2049,6 +3638,19 @@ class BackgroundJobRunner:
             if bool(alert_result.get("retry_recommended", False)):
                 raise RuntimeError("alert dispatch failed with retryable channel errors")
             return {"event_id": event_id, "alert_result": alert_result}
+        if job_type == "dispatch_system_notification":
+            config = _load_config()
+            alerts_cfg = config.get("alerts", {})
+            access_links = _resolve_alert_access_links(alerts_cfg, api_cfg=config.get("api", {}))
+            dispatch_result = _dispatch_system_notification_payload(
+                payload,
+                alerts_cfg,
+                root=self._root,
+                access_links=access_links,
+            )
+            if bool(dispatch_result.get("retry_recommended", False)):
+                raise RuntimeError("system dispatch failed with retryable channel errors")
+            return {"dispatch_result": dispatch_result, "kind": str(payload.get("kind", "system_notice"))}
         raise ValueError(f"unsupported job_type '{job_type}'")
 
 
@@ -2417,6 +4019,12 @@ class CameraProfileAutomationRunner:
                 state = _ensure_mode_state_shape(fetch_camera_mode_state(SQLITE_DB_PATH))
 
                 if not bool(control.get("enabled", False)):
+                    with SYSTEM_DISPATCH_STATE_LOCK:
+                        SYSTEM_DISPATCH_STATE["camera_offline"] = None
+                        SYSTEM_DISPATCH_STATE["camera_source_states"] = {}
+                        SYSTEM_DISPATCH_STATE["camera_expected_reboot_until_ts_utc"] = ""
+                        SYSTEM_DISPATCH_STATE["camera_expected_reboot_reason"] = ""
+                        SYSTEM_DISPATCH_STATE["camera_expected_reboot_delay_ms"] = 0
                     state["sync_status"] = CAMERA_SYNC_UNAVAILABLE
                     state["last_reconcile_action"] = "camera_control_disabled"
                     state["last_error"] = "camera_control_disabled"
@@ -2424,8 +4032,23 @@ class CameraProfileAutomationRunner:
                     time.sleep(sleep_seconds)
                     continue
 
-                status_result = _camera_control_proxy_call(control, path="/status", require_auth=False)
+                try:
+                    status_result = _camera_control_proxy_call(control, path="/status", require_auth=False)
+                except HTTPException as exc:
+                    status_result = {
+                        "ok": False,
+                        "error": "camera_request_failed",
+                        "detail": str(exc.detail),
+                        "status_code": int(exc.status_code),
+                    }
                 if not bool(status_result.get("ok", False)):
+                    _record_camera_connectivity_observation(
+                        connected=False,
+                        control=control,
+                        reason=str(status_result.get("error", "camera_status_unavailable")),
+                        metadata=status_result,
+                        source="control_status",
+                    )
                     self._track_apply_result(status_result, error_hint="camera_status_failed")
                     state["sync_status"] = CAMERA_SYNC_UNAVAILABLE
                     state["last_reconcile_action"] = "camera_status_unavailable"
@@ -2435,6 +4058,13 @@ class CameraProfileAutomationRunner:
                     time.sleep(sleep_seconds)
                     continue
 
+                _record_camera_connectivity_observation(
+                    connected=True,
+                    control=control,
+                    reason="status_ok",
+                    metadata={"camera_status_code": status_result.get("camera_status_code", 200)},
+                    source="control_status",
+                )
                 status_payload = dict(status_result.get("payload") or {})
                 state["last_camera_status"] = _extract_status_subset(status_payload)
                 active_mode = str(state.get("active_mode", CAMERA_MODE_BASE))
@@ -2475,8 +4105,16 @@ def startup_event() -> None:
     PROFILE_AUTOMATION_RUNNER = CameraProfileAutomationRunner()
     PROFILE_AUTOMATION_RUNNER.start()
 
+    global CLIP_CAPTURE_MANAGER
+    CLIP_CAPTURE_MANAGER = ClipCaptureManager()
+
+    global RESTART_SCHEDULE_RUNNER
+    RESTART_SCHEDULE_RUNNER = RestartScheduleRunner()
+    RESTART_SCHEDULE_RUNNER.start()
+
     _clear_server_control_state()
     _install_server_control_signal_handlers()
+    _classify_startup_restart_state()
 
 
 @app.on_event("shutdown")
@@ -2490,6 +4128,12 @@ def shutdown_event() -> None:
     if PROFILE_AUTOMATION_RUNNER is not None:
         PROFILE_AUTOMATION_RUNNER.stop()
         PROFILE_AUTOMATION_RUNNER = None
+    global RESTART_SCHEDULE_RUNNER
+    if RESTART_SCHEDULE_RUNNER is not None:
+        RESTART_SCHEDULE_RUNNER.stop()
+        RESTART_SCHEDULE_RUNNER = None
+    global CLIP_CAPTURE_MANAGER
+    CLIP_CAPTURE_MANAGER = None
     ingest_service.stop()
     _restore_server_control_signal_handlers()
 
@@ -2551,6 +4195,279 @@ def server_control_schedule(
     return JSONResponse({"ok": True, "state": state})
 
 
+@app.get("/api/server/restart-schedule")
+def server_restart_schedule_get() -> JSONResponse:
+    """Return daily/weekly restart schedule and runner status."""
+    schedule = _load_restart_schedule_from_config()
+    runner = (
+        RESTART_SCHEDULE_RUNNER.status()
+        if RESTART_SCHEDULE_RUNNER is not None
+        else {"running": False, "last_error": "", "last_tick_local": ""}
+    )
+    return JSONResponse({"ok": True, "schedule": schedule, "runner": runner})
+
+
+@app.post("/api/server/restart-schedule")
+def server_restart_schedule_set(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Persist daily/weekly restart schedule for reboot orchestration."""
+    schedule = payload.get("schedule", payload)
+    saved = _save_restart_schedule_to_config(_normalize_restart_schedule(schedule))
+    return JSONResponse({"ok": True, "schedule": saved})
+
+
+@app.get("/api/restart-events")
+def restart_events(limit: int = Query(default=50, ge=1, le=200)) -> JSONResponse:
+    """Return recent planned/unexpected restart classification records."""
+    if SQLITE_DB_PATH is None:
+        return JSONResponse({"events": []})
+    items = fetch_recent_server_restart_events(SQLITE_DB_PATH, limit=int(limit))
+    return JSONResponse({"events": items})
+
+
+@app.post("/api/viewers/heartbeat")
+def viewers_heartbeat(request: FastAPIRequest, payload: dict[str, Any] = Body(default={})) -> JSONResponse:
+    """Register/update one dashboard viewer heartbeat."""
+    viewer_id = str(payload.get("viewer_id", "")).strip() or None
+    host = str(getattr(request.client, "host", "") or "")
+    user_agent = str(request.headers.get("user-agent", "") or "")
+    result = _register_viewer_heartbeat(viewer_id=viewer_id, client_host=host, user_agent=user_agent)
+    return JSONResponse({"ok": True, **result})
+
+
+@app.get("/api/viewers/count")
+def viewers_count() -> JSONResponse:
+    """Return active dashboard viewers based on heartbeat TTL."""
+    return JSONResponse(_viewer_count_payload())
+
+
+@app.post("/api/capture/manual-clip")
+def capture_manual_clip(payload: dict[str, Any] = Body(default={})) -> JSONResponse:
+    """Create a manual lookback clip (15s/30s typical) from ingest buffer."""
+    if CLIP_CAPTURE_MANAGER is None:
+        raise HTTPException(status_code=503, detail="capture manager unavailable")
+    requested_seconds = int(payload.get("seconds", 15))
+    title = str(payload.get("title", "")).strip()
+    config = _load_config()
+    ingest_cfg = config.get("ingest", {})
+    fps = min(12.0, max(5.0, float(ingest_cfg.get("output_fps", 10.0))))
+    try:
+        result = CLIP_CAPTURE_MANAGER.create_manual_clip(seconds=requested_seconds, fps=fps)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    event_id = None
+    default_title = title or f"Clipped event {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    if SQLITE_DB_PATH is not None:
+        event_payload = {
+            "ts_utc": _utc_now(),
+            "label": "manual_clip",
+            "confidence": 0.5,
+            "snapshot": result.get("snapshot_path"),
+            "clip": result.get("clip_path"),
+            "review_state": "unreviewed",
+            "share_state": "not_shared",
+            "deletion_state": "present",
+            "lifecycle_state": "media_attached",
+            "notes": f"title={default_title}",
+        }
+        try:
+            event_id = insert_event_record(SQLITE_DB_PATH, event_payload, event_type="manual_clip")
+        except Exception:
+            event_id = None
+    response = {
+        "ok": True,
+        "event_id": event_id,
+        "title": default_title,
+        "clip_path": result.get("clip_path"),
+        "snapshot_path": result.get("snapshot_path"),
+        "seconds": int(result.get("seconds", requested_seconds)),
+        "written_frames": int(result.get("written_frames", 0)),
+    }
+    return JSONResponse(response)
+
+
+@app.post("/api/capture/event-session/start")
+def capture_event_session_start(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Start one detector-owned event clip session with pre-roll and idle stop policy."""
+    if CLIP_CAPTURE_MANAGER is None:
+        raise HTTPException(status_code=503, detail="capture manager unavailable")
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    event_id = int(payload.get("event_id", 0))
+    if event_id <= 0:
+        raise HTTPException(status_code=400, detail="event_id is required")
+    pre_roll_seconds = float(payload.get("pre_roll_seconds", 8))
+    idle_timeout_seconds = float(payload.get("idle_timeout_seconds", 6))
+    default_session_fps = min(6.0, float(_load_config().get("ingest", {}).get("output_fps", 10)))
+    output_fps = float(payload.get("output_fps", default_session_fps))
+    try:
+        session = CLIP_CAPTURE_MANAGER.start_event_session(
+            event_id=event_id,
+            pre_roll_seconds=pre_roll_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            output_fps=output_fps,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "session": session})
+
+
+@app.post("/api/capture/event-session/heartbeat")
+def capture_event_session_heartbeat(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Refresh one active event clip session heartbeat."""
+    if CLIP_CAPTURE_MANAGER is None:
+        raise HTTPException(status_code=503, detail="capture manager unavailable")
+    session_id = str(payload.get("session_id", "")).strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        status = CLIP_CAPTURE_MANAGER.heartbeat(session_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "session": status})
+
+
+@app.post("/api/capture/event-session/stop")
+def capture_event_session_stop(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Stop one active event clip session and attach clip path to the owning event."""
+    if CLIP_CAPTURE_MANAGER is None:
+        raise HTTPException(status_code=503, detail="capture manager unavailable")
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    session_id = str(payload.get("session_id", "")).strip()
+    reason = str(payload.get("reason", "")).strip() or "stop_requested"
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        status = CLIP_CAPTURE_MANAGER.stop(session_id, reason=reason)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    attached = False
+    event_id = int(status.get("event_id", 0) or 0)
+    clip_path = str(status.get("output_clip_path", "")).strip()
+    if event_id > 0 and clip_path:
+        attached = attach_event_media_paths(SQLITE_DB_PATH, event_id, clip_path=clip_path)
+    return JSONResponse({"ok": True, "session": status, "attached": attached})
+
+
+@app.get("/api/capture/event-session/status")
+def capture_event_session_status() -> JSONResponse:
+    """Return active detector event session status."""
+    if CLIP_CAPTURE_MANAGER is None:
+        return JSONResponse({"active": False})
+    return JSONResponse(CLIP_CAPTURE_MANAGER.active_status())
+
+
+@app.get("/api/saved")
+def saved_list(
+    limit: int = Query(default=24, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    q: str = Query(default=""),
+    range: str = Query(default="all"),
+    sort: str = Query(default="newest"),
+) -> JSONResponse:
+    """Return paginated saved-media library."""
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    payload = list_saved_items(
+        SQLITE_DB_PATH,
+        limit=limit,
+        offset=offset,
+        q=q,
+        range_key=range,
+        sort_key=sort,
+    )
+    items = payload.get("saved_items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            snapshot_ref = str(item.get("snapshot", "") or "").strip()
+            if snapshot_ref:
+                continue
+            clip_ref = str(item.get("clip", "") or "").replace("\\", "/").strip()
+            if not clip_ref:
+                continue
+            clip_name = Path(clip_ref).name
+            generated_snapshot_url = _ensure_recording_thumbnail(clip_name)
+            if generated_snapshot_url:
+                item["snapshot"] = generated_snapshot_url
+    return JSONResponse(payload)
+
+
+@app.post("/api/saved")
+def saved_create(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Save one event/recording into keep-forever saved library."""
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    event_id_raw = payload.get("event_id")
+    event_id = int(event_id_raw) if event_id_raw is not None else None
+    source_type = str(payload.get("source_type", "event")).strip() or "event"
+    title = str(payload.get("title", "")).strip()
+    notes = str(payload.get("notes", "")).strip()
+    clip_ref = _normalize_recording_ref(payload.get("clip_path"))
+    snapshot_ref = _normalize_snapshot_ref(payload.get("snapshot_path"))
+    event_uid: str | None = None
+
+    if event_id is not None:
+        event = fetch_event_by_id(SQLITE_DB_PATH, event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        clip_ref = _normalize_recording_ref(event.get("clip")) or clip_ref
+        snapshot_ref = _normalize_snapshot_ref(event.get("snapshot")) or snapshot_ref
+        event_uid = str(event.get("event_uid", "")).strip() or None
+        if not title:
+            title = f"{str(event.get('label', 'event')).title()} {str(event.get('ts_utc', ''))}"
+        update_event_lifecycle_state(SQLITE_DB_PATH, event_id, "saved")
+
+    if not clip_ref:
+        raise HTTPException(status_code=400, detail="clip_path is required")
+    if not title:
+        title = f"Saved {Path(clip_ref).stem}"
+
+    saved = create_saved_item(
+        SQLITE_DB_PATH,
+        clip_path=clip_ref,
+        snapshot_path=snapshot_ref,
+        title=title,
+        source_type=source_type,
+        event_id=event_id,
+        event_uid=event_uid,
+        notes=notes,
+    )
+    return JSONResponse({"ok": True, "saved": saved})
+
+
+@app.delete("/api/saved/{saved_id}")
+def saved_delete(saved_id: int, delete_files: bool = Query(default=True)) -> JSONResponse:
+    """Delete one saved item and optionally remove linked media files."""
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    existing = mark_saved_item_deleted(SQLITE_DB_PATH, int(saved_id))
+    if existing is None:
+        raise HTTPException(status_code=404, detail="saved item not found")
+    deleted_paths: list[str] = []
+    if bool(delete_files):
+        for media_ref in (existing.get("snapshot"), existing.get("clip")):
+            rel = str(media_ref or "").strip()
+            if not rel:
+                continue
+            abs_path = (ROOT / rel).resolve()
+            try:
+                if abs_path.exists() and abs_path.is_file():
+                    abs_path.unlink()
+                    deleted_paths.append(rel)
+            except OSError:
+                continue
+    linked_event_id = existing.get("event_id")
+    if linked_event_id is not None:
+        try:
+            update_event_lifecycle_state(SQLITE_DB_PATH, int(linked_event_id), "deleted")
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "saved_id": int(saved_id), "deleted_paths": deleted_paths})
+
+
 @app.get("/api/health")
 def health() -> JSONResponse:
     """Return overall backend health and ingest/storage diagnostics."""
@@ -2568,6 +4485,12 @@ def health() -> JSONResponse:
     jobs_payload = {"total": 0, "ready_now": 0}
     if SQLITE_DB_PATH is not None:
         jobs_payload = background_job_stats(SQLITE_DB_PATH)
+    viewers_payload = _viewer_count_payload()
+    restart_schedule_status = (
+        RESTART_SCHEDULE_RUNNER.status()
+        if RESTART_SCHEDULE_RUNNER is not None
+        else {"running": False, "last_error": "", "last_tick_local": ""}
+    )
 
     return JSONResponse(
         {
@@ -2586,6 +4509,8 @@ def health() -> JSONResponse:
             "ingest": ingest,
             "storage": storage_payload,
             "jobs": jobs_payload,
+            "viewers": viewers_payload,
+            "restart_schedule": restart_schedule_status,
             "server_control": _server_control_state_snapshot(),
         }
     )
@@ -2620,6 +4545,7 @@ def get_events(
     severity: str = Query(default="all"),
     media: str = Query(default="all"),
     range: str = Query(default="all"),
+    retention_queue: str = Query(default="all"),
 ) -> JSONResponse:
     """Return filterable, paginated events from metadata storage."""
     payload = _events_query_payload(
@@ -2629,6 +4555,7 @@ def get_events(
         severity=severity,
         media=media,
         range_key=range,
+        retention_queue=retention_queue,
     )
     return JSONResponse(payload)
 
@@ -2653,6 +4580,33 @@ def set_event_media_links(
     if not updated:
         raise HTTPException(status_code=404, detail="Event record not found.")
     return JSONResponse({"updated": True, "event_id": event_id})
+
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: int, delete_files: bool = Query(default=True)) -> JSONResponse:
+    """Manually delete one event and optionally remove linked snapshot/clip files."""
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    event = fetch_event_by_id(SQLITE_DB_PATH, int(event_id))
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event record not found.")
+
+    deleted_paths: list[str] = []
+    if bool(delete_files):
+        for media_ref in (event.get("snapshot"), event.get("clip")):
+            rel = str(media_ref or "").strip()
+            if not rel:
+                continue
+            abs_path = (ROOT / rel).resolve()
+            try:
+                if abs_path.exists() and abs_path.is_file():
+                    abs_path.unlink()
+                    deleted_paths.append(rel)
+            except OSError:
+                continue
+
+    update_event_lifecycle_state(SQLITE_DB_PATH, int(event_id), "deleted")
+    return JSONResponse({"ok": True, "event_id": int(event_id), "deleted_paths": deleted_paths})
 
 
 @app.get("/api/media/integrity")
@@ -2722,6 +4676,15 @@ def retention_cull(
             sample_limit=sample_limit,
         )
     )
+
+
+@app.post("/api/retention/reset")
+def retention_reset_timers(include_saved: bool = Query(default=False)) -> JSONResponse:
+    """Reset event retention timers so countdown starts from current time."""
+    if SQLITE_DB_PATH is None:
+        raise HTTPException(status_code=503, detail="SQLite metadata store is not ready.")
+    result = reset_event_retention_from_now(SQLITE_DB_PATH, include_saved=bool(include_saved))
+    return JSONResponse({"ok": True, **result})
 
 
 @app.post("/api/policy/backfill")
@@ -2865,6 +4828,7 @@ def config_safe() -> JSONResponse:
     ingest_cfg = config.get("ingest", {})
     storage_cfg = config.get("storage", {})
     jobs_cfg = config.get("jobs", {})
+    dispatch_cfg = _resolve_dispatch_settings(config)
     camera_control_cfg = _resolve_camera_control_settings(config)
     profile_automation_cfg = _resolve_camera_profile_automation_settings(config)
     automation_status = PROFILE_AUTOMATION_RUNNER.status() if PROFILE_AUTOMATION_RUNNER is not None else {}
@@ -2894,6 +4858,7 @@ def config_safe() -> JSONResponse:
             "retry_delay_seconds": jobs_cfg.get("retry_delay_seconds", 10),
             "stale_running_seconds": jobs_cfg.get("stale_running_seconds", 300),
         },
+        "dispatches": dispatch_cfg,
         "alerts": {
             "enabled": alerts_cfg.get("enabled", False),
             "webhook_enabled": bool(alerts_cfg.get("webhook_enabled", True)),
@@ -2921,8 +4886,13 @@ def config_safe() -> JSONResponse:
             "enabled": bool(auth_cfg.get("enabled", False)),
             "session_secret_configured": _is_strong_secret(auth_cfg.get("session_secret"), min_length=24),
             "session_hours": int(auth_cfg.get("session_hours", 24)),
+            "admin_token_configured": bool(str(auth_cfg.get("admin_token", "")).strip()),
+            "tailscale_read_only_bypass": True,
         },
         "api": {"host": api_cfg.get("host"), "port": api_cfg.get("port")},
+        "server_control": {
+            "restart_schedule": _load_restart_schedule_from_config(),
+        },
         "camera_control": {
             "enabled": bool(camera_control_cfg.get("enabled", False)),
             "base_url": camera_control_cfg.get("base_url", ""),
@@ -3411,12 +5381,57 @@ def camera_control_reboot(delay_ms: int = Query(default=250, ge=100, le=10000)) 
     """Request camera reboot using protected /reboot endpoint."""
     config = _load_config()
     control = _resolve_camera_control_settings(config)
-    result = _camera_control_proxy_call(
-        control,
-        path="/reboot",
-        query={"delay_ms": int(delay_ms)},
-        require_auth=True,
-    )
+    delay_ms_safe = int(delay_ms)
+    try:
+        result = _camera_control_proxy_call(
+            control,
+            path="/reboot",
+            query={"delay_ms": delay_ms_safe},
+            require_auth=True,
+        )
+    except HTTPException as exc:
+        detail_text = str(exc.detail or "")
+        lower = detail_text.lower()
+        remote_closed_markers = (
+            "remote end closed connection without response",
+            "forcibly closed",
+            "connection reset",
+        )
+        if any(marker in lower for marker in remote_closed_markers):
+            base_url = str(control.get("base_url", "")).strip().rstrip("/")
+            reboot_url = f"{base_url}/reboot?delay_ms={delay_ms_safe}" if base_url else "/reboot"
+            result = {
+                "ok": True,
+                "accepted": True,
+                "camera_status_code": 202,
+                "camera_url": _redact_token_query(reboot_url),
+                "note": "Camera closed the connection while rebooting; treating reboot as accepted.",
+                "detail": detail_text,
+                "payload": {},
+            }
+        else:
+            raise
+
+    if bool(result.get("ok", False)):
+        window_seconds = max(30, min(240, int(delay_ms_safe / 1000) + 90))
+        until_utc = (datetime.now(timezone.utc) + timedelta(seconds=window_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with SYSTEM_DISPATCH_STATE_LOCK:
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_until_ts_utc"] = until_utc
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_reason"] = "camera_reboot_api"
+            SYSTEM_DISPATCH_STATE["camera_expected_reboot_delay_ms"] = delay_ms_safe
+        _queue_system_dispatch(
+            kind="camera_reboot_requested",
+            title="Camera restart requested",
+            summary=f"Camera reboot requested with delay {delay_ms_safe} ms.",
+            severity="info",
+            metadata={
+                "base_url": str(control.get("base_url", "")),
+                "delay_ms": delay_ms_safe,
+                "expected_reboot_until_utc": until_utc,
+            },
+        )
+        result["expected_disconnect_window_seconds"] = window_seconds
+        result["expected_reboot_until_utc"] = until_utc
     return JSONResponse(result, status_code=200 if result.get("ok") else 502)
 
 
@@ -3446,7 +5461,7 @@ def logs() -> JSONResponse:
 
 
 @app.get("/api/logs/{log_name}")
-def log_content(log_name: str, lines: int = Query(default=200, ge=1, le=5000)) -> JSONResponse:
+def log_content(log_name: str, lines: int = Query(default=500, ge=0, le=20000)) -> JSONResponse:
     """Return tail content for a selected log file."""
     safe_name = Path(log_name).name
     file_path = LOGS_DIR / safe_name

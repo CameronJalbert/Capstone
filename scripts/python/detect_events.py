@@ -83,6 +83,46 @@ def backend_frame_url(config: dict[str, Any], detect_cfg: dict[str, Any]) -> str
     return f"http://{host}:{port}/api/live-frame?quality=85"
 
 
+def backend_api_base(config: dict[str, Any]) -> str:
+    """Resolve backend API base URL from app config."""
+    api_cfg = config.get("api", {})
+    host = normalize_api_host(str(api_cfg.get("host", "127.0.0.1")))
+    port = int(api_cfg.get("port", 8080))
+    return f"http://{host}:{port}"
+
+
+def backend_json_request(
+    *,
+    method: str,
+    url: str,
+    timeout_seconds: float,
+    payload: dict[str, Any] | None = None,
+    admin_token: str = "",
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Send one backend JSON request and return (json,error)."""
+    body = None
+    headers = {"Content-Type": "application/json"}
+    token = str(admin_token or "").strip()
+    if token:
+        headers["X-Admin-Token"] = token
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+    request = Request(url, method=method.upper(), data=body, headers=headers)
+    try:
+        with urlopen(request, timeout=max(timeout_seconds, 0.2)) as response:
+            raw = response.read()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        return None, str(exc)
+    if not raw:
+        return {}, None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        return data if isinstance(data, dict) else {"_raw": data}, None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, "invalid_json_response"
+
+
 def open_camera_capture(input_url: str) -> cv2.VideoCapture | None:
     """Open camera stream with FFMPEG preference and backend fallback."""
     capture = cv2.VideoCapture(input_url, cv2.CAP_FFMPEG)
@@ -234,7 +274,7 @@ def main() -> int:
     confidence_threshold = float(detect_cfg.get("confidence_threshold", 0.45))
     frame_skip = max(int(detect_cfg.get("frame_skip", 5)), 1)
     target_classes = {str(name).lower() for name in detect_cfg.get("target_classes", ["person"])}
-    cooldown_seconds = max(float(detect_cfg.get("cooldown_seconds", 8)), 0.0)
+    cooldown_seconds = max(float(detect_cfg.get("cooldown_seconds", 2)), 0.0)
     inference_max_fps = max(float(detect_cfg.get("inference_max_fps", 2.0)), 0.2)
     inference_min_interval_seconds = 1.0 / inference_max_fps
     motion_gate_enabled = bool(detect_cfg.get("motion_gate_enabled", True))
@@ -253,6 +293,14 @@ def main() -> int:
     log_file = resolve_path(detect_cfg.get("log_file", "data/logs/detector.log"))
     log_level = str(detect_cfg.get("log_level", "INFO")).strip().upper()
     sqlite_db_path = resolve_sqlite_path(config, ROOT)
+    backend_base = backend_api_base(config)
+    event_session_start_url = f"{backend_base}/api/capture/event-session/start"
+    event_session_heartbeat_url = f"{backend_base}/api/capture/event-session/heartbeat"
+    event_session_stop_url = f"{backend_base}/api/capture/event-session/stop"
+    auth_cfg = config.get("auth", {})
+    backend_admin_token = str(auth_cfg.get("admin_token", "")).strip()
+    event_pre_roll_seconds = max(5.0, min(float(detect_cfg.get("event_clip_pre_roll_seconds", 8.0)), 10.0))
+    event_idle_timeout_seconds = max(float(detect_cfg.get("event_idle_timeout_seconds", 6.0)), 2.0)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     logger = build_logger(log_file, log_level)
@@ -281,6 +329,12 @@ def main() -> int:
         motion_gate_enabled,
         motion_force_inference_interval_seconds,
     )
+    logger.info(
+        "Event clip policy: pre_roll=%.1fs idle_timeout=%.1fs backend_base=%s",
+        event_pre_roll_seconds,
+        event_idle_timeout_seconds,
+        backend_base,
+    )
     if write_legacy_ndjson:
         logger.info("Legacy NDJSON write is enabled: %s", events_file)
 
@@ -303,6 +357,10 @@ def main() -> int:
     motion_passes = 0
     forced_motion_inferences = 0
     events_detected = 0
+    active_event_id: int | None = None
+    active_event_session_id = ""
+    active_presence_last_detected_ts = 0.0
+    last_session_heartbeat_ts = 0.0
 
     try:
         while True:
@@ -336,6 +394,24 @@ def main() -> int:
                     source_name = "backend live-frame API" if frame_source == "backend_live_frame" else "camera stream"
                     logger.warning("Frame source unavailable (%s): %s. Retrying...", source_name, source_error)
                     last_source_error_log_ts = now
+                if (
+                    active_event_id is not None
+                    and active_presence_last_detected_ts > 0
+                    and (now - active_presence_last_detected_ts) >= event_idle_timeout_seconds
+                    and active_event_session_id
+                ):
+                    _, stop_error = backend_json_request(
+                        method="POST",
+                        url=event_session_stop_url,
+                        payload={"session_id": active_event_session_id, "reason": "source_unavailable_idle_timeout"},
+                        timeout_seconds=frame_fetch_timeout_seconds,
+                        admin_token=backend_admin_token,
+                    )
+                    if stop_error:
+                        logger.warning("Event clip stop on source loss failed: %s", stop_error)
+                    active_event_id = None
+                    active_event_session_id = ""
+                    active_presence_last_detected_ts = 0.0
                 time.sleep(source_retry_delay_seconds)
                 continue
 
@@ -356,8 +432,6 @@ def main() -> int:
             if frame_index % frame_skip != 0:
                 continue
 
-            if now - last_event_ts < cooldown_seconds:
-                continue
             if now - last_inference_ts < inference_min_interval_seconds:
                 continue
 
@@ -399,6 +473,62 @@ def main() -> int:
                 break
 
             if not detected:
+                if (
+                    active_event_id is not None
+                    and active_presence_last_detected_ts > 0
+                    and (now - active_presence_last_detected_ts) >= event_idle_timeout_seconds
+                ):
+                    if active_event_session_id:
+                        stop_payload = {
+                            "session_id": active_event_session_id,
+                            "reason": "presence_idle_timeout",
+                        }
+                        _, stop_error = backend_json_request(
+                            method="POST",
+                            url=event_session_stop_url,
+                            payload=stop_payload,
+                            timeout_seconds=frame_fetch_timeout_seconds,
+                            admin_token=backend_admin_token,
+                        )
+                        if stop_error:
+                            logger.warning(
+                                "Event clip stop failed event_id=%s session_id=%s error=%s",
+                                active_event_id,
+                                active_event_session_id,
+                                stop_error,
+                            )
+                    logger.info("Event presence ended event_id=%s", active_event_id)
+                    active_event_id = None
+                    active_event_session_id = ""
+                    active_presence_last_detected_ts = 0.0
+                continue
+
+            active_presence_last_detected_ts = now
+            if active_event_id is not None:
+                if active_event_session_id and (now - last_session_heartbeat_ts) >= 1.0:
+                    heartbeat_payload = {"session_id": active_event_session_id}
+                    _, heartbeat_error = backend_json_request(
+                        method="POST",
+                        url=event_session_heartbeat_url,
+                        payload=heartbeat_payload,
+                        timeout_seconds=frame_fetch_timeout_seconds,
+                        admin_token=backend_admin_token,
+                    )
+                    if heartbeat_error:
+                        logger.warning(
+                            "Event clip heartbeat failed event_id=%s session_id=%s error=%s",
+                            active_event_id,
+                            active_event_session_id,
+                            heartbeat_error,
+                        )
+                        if "404" in str(heartbeat_error):
+                            active_event_id = None
+                            active_event_session_id = ""
+                            active_presence_last_detected_ts = 0.0
+                    else:
+                        last_session_heartbeat_ts = now
+                continue
+            if now - last_event_ts < cooldown_seconds:
                 continue
 
             ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -459,15 +589,39 @@ def main() -> int:
                 else:
                     sent = send_alert(event, alerts_cfg)
                     alert_status = "inline_sent" if sent else "inline_failed"
+
+            session_status = "not_started"
+            if sqlite_event_id is not None:
+                start_payload = {
+                    "event_id": int(sqlite_event_id),
+                    "pre_roll_seconds": event_pre_roll_seconds,
+                    "idle_timeout_seconds": event_idle_timeout_seconds,
+                }
+                start_json, start_error = backend_json_request(
+                    method="POST",
+                    url=event_session_start_url,
+                    payload=start_payload,
+                    timeout_seconds=frame_fetch_timeout_seconds,
+                    admin_token=backend_admin_token,
+                )
+                if start_error:
+                    session_status = f"start_error:{start_error}"
+                else:
+                    session = dict((start_json or {}).get("session") or {})
+                    active_event_session_id = str(session.get("session_id", "")).strip()
+                    session_status = "started" if active_event_session_id else "start_missing_session_id"
+                    last_session_heartbeat_ts = now
+                active_event_id = int(sqlite_event_id)
             events_detected += 1
             logger.info(
-                "Event detected id=%s label=%s confidence=%.4f snapshot=%s alert_sent=%s alert_status=%s motion_ratio=%.4f sink=%s",
+                "Event detected id=%s label=%s confidence=%.4f snapshot=%s alert_sent=%s alert_status=%s session_status=%s motion_ratio=%.4f sink=%s",
                 sqlite_event_id,
                 detected["label"],
                 detected["confidence"],
                 event["snapshot"],
                 sent,
                 alert_status,
+                session_status,
                 motion_ratio_value,
                 write_target,
             )
@@ -475,6 +629,16 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.info("Detection stopped by user.")
     finally:
+        if active_event_session_id:
+            _, stop_error = backend_json_request(
+                method="POST",
+                url=event_session_stop_url,
+                payload={"session_id": active_event_session_id, "reason": "detector_shutdown"},
+                timeout_seconds=frame_fetch_timeout_seconds,
+                admin_token=backend_admin_token,
+            )
+            if stop_error:
+                logger.warning("Final event session stop failed: %s", stop_error)
         if cap is not None:
             cap.release()
     return 0
