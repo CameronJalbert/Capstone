@@ -22,18 +22,21 @@
 #include "sdkconfig.h"
 #include "camera_index.h"
 #include "board_config.h"
+#include <WiFi.h>
+#include <inttypes.h>
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
 #endif
 
+// Shared auth token is defined in CameraWebServer.ino
+extern const char kControlApiToken[];
+
 // LED FLASH setup
 #if defined(LED_GPIO_NUM)
 #define CONFIG_LED_MAX_INTENSITY 255
-
 int led_duty = 0;
 bool isStreaming = false;
-
 #endif
 
 typedef struct {
@@ -45,16 +48,28 @@ typedef struct {
 static const char *_STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char *_STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\nX-Timestamp: %d.%06d\r\n\r\n";
+#define STREAM_LOG_INTERVAL_US 2000000LL
+
+// Guardrail allow-list for XCLK changes.
+static const int kAllowedXclkMhz[] = {15, 18, 24};
+
+// Profile names exposed to backend control endpoint.
+static const char *kProfileBase = "base";
+static const char *kProfileDay = "day";
+static const char *kProfileNight = "night";
 
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
+// Exposed in status/health so backend can verify expected profile ownership.
+static char active_profile[16] = "base";
+
 typedef struct {
-  size_t size;   //number of values used for filtering
-  size_t index;  //current value index
-  size_t count;  //value count
+  size_t size;   // number of values used for filtering
+  size_t index;  // current value index
+  size_t count;  // value count
   int sum;
-  int *values;  //array to be filled with values
+  int *values;   // array to be filled with values
 } ra_filter_t;
 
 static ra_filter_t ra_filter;
@@ -90,17 +105,235 @@ static int ra_filter_run(ra_filter_t *filter, int value) {
 #endif
 
 #if defined(LED_GPIO_NUM)
-void enable_led(bool en) {  // Turn LED On or Off
+void enable_led(bool en) {  // Turn LED on or off
   int duty = en ? led_duty : 0;
-  if (en && isStreaming && (led_duty > CONFIG_LED_MAX_INTENSITY)) {
+  if (duty < 0) {
+    duty = 0;
+  }
+  if (duty > CONFIG_LED_MAX_INTENSITY) {
     duty = CONFIG_LED_MAX_INTENSITY;
   }
   ledcWrite(LED_GPIO_NUM, duty);
-  //ledc_set_duty(CONFIG_LED_LEDC_SPEED_MODE, CONFIG_LED_LEDC_CHANNEL, duty);
-  //ledc_update_duty(CONFIG_LED_LEDC_SPEED_MODE, CONFIG_LED_LEDC_CHANNEL);
   log_i("Set LED intensity to %d", duty);
 }
 #endif
+
+// -----------------------------
+// Utility helpers
+// -----------------------------
+
+static esp_err_t send_json(httpd_req_t *req, const char *json_body) {
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, json_body, strlen(json_body));
+}
+
+static esp_err_t send_json_error(httpd_req_t *req, const char *status, const char *error_msg) {
+  char body[192];
+  snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", error_msg);
+  httpd_resp_set_status(req, status);
+  return send_json(req, body);
+}
+
+static bool get_query_value_no_fail(httpd_req_t *req, const char *key, char *out, size_t out_len) {
+  if (!req || !key || !out || out_len == 0) {
+    return false;
+  }
+
+  out[0] = '\0';
+  size_t query_len = httpd_req_get_url_query_len(req);
+  if (query_len == 0) {
+    return false;
+  }
+
+  char *buf = (char *)malloc(query_len + 1);
+  if (!buf) {
+    return false;
+  }
+
+  bool found = false;
+  if (httpd_req_get_url_query_str(req, buf, query_len + 1) == ESP_OK) {
+    found = (httpd_query_key_value(buf, key, out, out_len) == ESP_OK);
+  }
+
+  free(buf);
+  return found;
+}
+
+// Constant-time style compare for small secret token strings.
+static bool secure_equals(const char *a, const char *b) {
+  if (!a || !b) {
+    return false;
+  }
+
+  size_t la = strlen(a);
+  size_t lb = strlen(b);
+  size_t n = (la > lb) ? la : lb;
+  uint8_t diff = (uint8_t)(la ^ lb);
+
+  for (size_t i = 0; i < n; ++i) {
+    uint8_t ca = (i < la) ? (uint8_t)a[i] : 0;
+    uint8_t cb = (i < lb) ? (uint8_t)b[i] : 0;
+    diff |= (uint8_t)(ca ^ cb);
+  }
+
+  return diff == 0;
+}
+
+// Accepted token locations:
+// 1) query param: ?token=...
+// 2) header: X-API-Token: ...
+// 3) header: Authorization: Bearer ...
+static bool request_has_valid_token(httpd_req_t *req) {
+  if (!kControlApiToken || kControlApiToken[0] == '\0') {
+    return false;
+  }
+
+  char provided[128] = {0};
+
+  if (get_query_value_no_fail(req, "token", provided, sizeof(provided))) {
+    return secure_equals(provided, kControlApiToken);
+  }
+
+  if (httpd_req_get_hdr_value_str(req, "X-API-Token", provided, sizeof(provided)) == ESP_OK) {
+    return secure_equals(provided, kControlApiToken);
+  }
+
+  char auth[192] = {0};
+  if (httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth)) == ESP_OK) {
+    const char *prefix = "Bearer ";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(auth, prefix, prefix_len) == 0) {
+      snprintf(provided, sizeof(provided), "%s", auth + prefix_len);
+      return secure_equals(provided, kControlApiToken);
+    }
+  }
+
+  return false;
+}
+
+static esp_err_t require_valid_token(httpd_req_t *req) {
+  if (!request_has_valid_token(req)) {
+    return send_json_error(req, "401 Unauthorized", "unauthorized");
+  }
+  return ESP_OK;
+}
+
+static bool is_allowed_xclk_mhz(int xclk_mhz) {
+  for (size_t i = 0; i < sizeof(kAllowedXclkMhz) / sizeof(kAllowedXclkMhz[0]); ++i) {
+    if (xclk_mhz == kAllowedXclkMhz[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static int set_xclk_mhz_safe(sensor_t *s, int xclk_mhz) {
+  if (!s || !is_allowed_xclk_mhz(xclk_mhz)) {
+    return -1;
+  }
+  return s->set_xclk(s, LEDC_TIMER_0, xclk_mhz);
+}
+
+// Common stream baseline used by firmware profile endpoint.
+// Backend can still apply further mode-driven overrides.
+static int apply_stream_baseline(sensor_t *s) {
+  if (!s) {
+    return -1;
+  }
+
+  int rc = 0;
+
+  rc |= set_xclk_mhz_safe(s, 15);
+  rc |= s->set_framesize(s, FRAMESIZE_HVGA);
+  rc |= s->set_quality(s, 4);
+
+  rc |= s->set_brightness(s, 0);
+  rc |= s->set_contrast(s, 0);
+  rc |= s->set_saturation(s, 0);
+
+  rc |= s->set_whitebal(s, 1);
+  rc |= s->set_awb_gain(s, 1);
+  rc |= s->set_wb_mode(s, 0);
+  rc |= s->set_gain_ctrl(s, 1);
+  rc |= s->set_exposure_ctrl(s, 1);
+  rc |= s->set_aec2(s, 0);
+
+  rc |= s->set_special_effect(s, 0);
+  rc |= s->set_bpc(s, 0);
+  rc |= s->set_wpc(s, 1);
+  rc |= s->set_raw_gma(s, 1);
+  rc |= s->set_lenc(s, 1);
+  rc |= s->set_dcw(s, 1);
+  rc |= s->set_colorbar(s, 0);
+
+  rc |= s->set_hmirror(s, 0);
+  rc |= s->set_vflip(s, 0);
+
+  return rc;
+}
+
+static int apply_named_profile(sensor_t *s, const char *profile_name) {
+  if (!s || !profile_name) {
+    return -1;
+  }
+
+  int rc = 0;
+
+  if (!strcmp(profile_name, kProfileBase)) {
+    rc |= apply_stream_baseline(s);
+#if defined(LED_GPIO_NUM)
+    led_duty = 0;
+    if (isStreaming) {
+      enable_led(true);
+    } else {
+      enable_led(false);
+    }
+#endif
+    snprintf(active_profile, sizeof(active_profile), "%s", kProfileBase);
+    return rc;
+  }
+
+  if (!strcmp(profile_name, kProfileDay)) {
+    rc |= apply_stream_baseline(s);
+    rc |= set_xclk_mhz_safe(s, 24);
+#if defined(LED_GPIO_NUM)
+    led_duty = 0;
+    if (isStreaming) {
+      enable_led(true);
+    } else {
+      enable_led(false);
+    }
+#endif
+    snprintf(active_profile, sizeof(active_profile), "%s", kProfileDay);
+    return rc;
+  }
+
+  if (!strcmp(profile_name, kProfileNight)) {
+    rc |= apply_stream_baseline(s);
+    rc |= set_xclk_mhz_safe(s, 15);
+#if defined(LED_GPIO_NUM)
+    // Night floor is 200 by design.
+    if (led_duty < 200) {
+      led_duty = 200;
+    }
+    if (led_duty > CONFIG_LED_MAX_INTENSITY) {
+      led_duty = CONFIG_LED_MAX_INTENSITY;
+    }
+    if (isStreaming) {
+      enable_led(true);
+    }
+#endif
+    snprintf(active_profile, sizeof(active_profile), "%s", kProfileNight);
+    return rc;
+  }
+
+  return -1;
+}
+
+// -----------------------------
+// HTTP handlers
+// -----------------------------
 
 static esp_err_t bmp_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
@@ -129,7 +362,7 @@ static esp_err_t bmp_handler(httpd_req_t *req) {
   bool converted = frame2bmp(fb, &buf, &buf_len);
   esp_camera_fb_return(fb);
   if (!converted) {
-    log_e("BMP Conversion failed");
+    log_e("BMP conversion failed");
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
@@ -137,8 +370,8 @@ static esp_err_t bmp_handler(httpd_req_t *req) {
   free(buf);
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
   int64_t fr_end = esp_timer_get_time();
-#endif
   log_i("BMP: %" PRId32 "ms, %" PRIu32 "B", (int32_t)((fr_end - fr_start) / 1000), (uint32_t)buf_len);
+#endif
   return res;
 }
 
@@ -163,8 +396,8 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 
 #if defined(LED_GPIO_NUM)
   enable_led(true);
-  vTaskDelay(150 / portTICK_PERIOD_MS);  // The LED needs to be turned on ~150ms before the call to esp_camera_fb_get()
-  fb = esp_camera_fb_get();              // or it won't be visible in the frame. A better way to do this is needed.
+  vTaskDelay(150 / portTICK_PERIOD_MS);  // LED pre-roll for still captures
+  fb = esp_camera_fb_get();
   enable_led(false);
 #else
   fb = esp_camera_fb_get();
@@ -181,13 +414,13 @@ static esp_err_t capture_handler(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
   char ts[32];
-  // Cast to uint32_t is safe until year 2106.
   snprintf(ts, 32, "%" PRIu32 ".%06" PRIu32, (uint32_t)fb->timestamp.tv_sec, (uint32_t)fb->timestamp.tv_usec);
   httpd_resp_set_hdr(req, "X-Timestamp", (const char *)ts);
 
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
   size_t fb_len = 0;
 #endif
+
   if (fb->format == PIXFORMAT_JPEG) {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
     fb_len = fb->len;
@@ -201,11 +434,14 @@ static esp_err_t capture_handler(httpd_req_t *req) {
     fb_len = jchunk.len;
 #endif
   }
+
   esp_camera_fb_return(fb);
+
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
   int64_t fr_end = esp_timer_get_time();
-#endif
   log_i("JPG: %" PRIu32 "B %" PRId32 " ms", (uint32_t)fb_len, (int32_t)((fr_end - fr_start) / 1000));
+#endif
+
   return res;
 }
 
@@ -215,11 +451,13 @@ static esp_err_t stream_handler(httpd_req_t *req) {
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;
   uint8_t *_jpg_buf = NULL;
-  char *part_buf[128];
+  char part_buf[128];
 
   static int64_t last_frame = 0;
+  static int64_t last_log = 0;
   if (!last_frame) {
     last_frame = esp_timer_get_time();
+    last_log = last_frame;
   }
 
   res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
@@ -228,7 +466,6 @@ static esp_err_t stream_handler(httpd_req_t *req) {
   }
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-  httpd_resp_set_hdr(req, "X-Framerate", "60");
 
 #if defined(LED_GPIO_NUM)
   isStreaming = true;
@@ -243,6 +480,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     } else {
       _timestamp.tv_sec = fb->timestamp.tv_sec;
       _timestamp.tv_usec = fb->timestamp.tv_usec;
+
       if (fb->format != PIXFORMAT_JPEG) {
         bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
         esp_camera_fb_return(fb);
@@ -256,16 +494,18 @@ static esp_err_t stream_handler(httpd_req_t *req) {
         _jpg_buf = fb->buf;
       }
     }
+
     if (res == ESP_OK) {
       res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
     }
     if (res == ESP_OK) {
-      size_t hlen = snprintf((char *)part_buf, 128, _STREAM_PART, _jpg_buf_len, _timestamp.tv_sec, _timestamp.tv_usec);
+      size_t hlen = snprintf((char *)part_buf, sizeof(part_buf), _STREAM_PART, _jpg_buf_len, _timestamp.tv_sec, _timestamp.tv_usec);
       res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
     }
     if (res == ESP_OK) {
       res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
     }
+
     if (fb) {
       esp_camera_fb_return(fb);
       fb = NULL;
@@ -274,23 +514,32 @@ static esp_err_t stream_handler(httpd_req_t *req) {
       free(_jpg_buf);
       _jpg_buf = NULL;
     }
+
     if (res != ESP_OK) {
       log_e("Send frame failed");
       break;
     }
-    int64_t fr_end = esp_timer_get_time();
 
-    int64_t frame_time = fr_end - last_frame;
+    int64_t fr_end = esp_timer_get_time();
+    int64_t frame_time = (fr_end - last_frame) / 1000;
     last_frame = fr_end;
 
-    frame_time /= 1000;
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
-    uint32_t avg_frame_time = ra_filter_run(&ra_filter, frame_time);
+    uint32_t avg_frame_time = ra_filter_run(&ra_filter, (int)frame_time);
+    if ((fr_end - last_log) >= STREAM_LOG_INTERVAL_US) {
+      float fps = frame_time > 0 ? (1000.0f / (float)frame_time) : 0.0f;
+      float avg_fps = avg_frame_time > 0 ? (1000.0f / (float)avg_frame_time) : 0.0f;
+      log_i(
+        "MJPG: %" PRIu32 "B %" PRId32 "ms (%.1ffps), AVG: %" PRIu32 "ms (%.1ffps)",
+        (uint32_t)_jpg_buf_len,
+        (int32_t)frame_time,
+        fps,
+        avg_frame_time,
+        avg_fps
+      );
+      last_log = fr_end;
+    }
 #endif
-    log_i(
-      "MJPG: %" PRIu32 "B %" PRId32 "ms (%.1ffps), AVG: %" PRIu32 "ms (%.1ffps)", (uint32_t)_jpg_buf_len, (int32_t)frame_time, 1000.0 / frame_time,
-      avg_frame_time, 1000.0 / avg_frame_time
-    );
   }
 
 #if defined(LED_GPIO_NUM)
@@ -330,7 +579,9 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
   if (parse_get(req, &buf) != ESP_OK) {
     return ESP_FAIL;
   }
-  if (httpd_query_key_value(buf, "var", variable, sizeof(variable)) != ESP_OK || httpd_query_key_value(buf, "val", value, sizeof(value)) != ESP_OK) {
+
+  if (httpd_query_key_value(buf, "var", variable, sizeof(variable)) != ESP_OK ||
+      httpd_query_key_value(buf, "val", value, sizeof(value)) != ESP_OK) {
     free(buf);
     httpd_resp_send_404(req);
     return ESP_FAIL;
@@ -339,7 +590,12 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
 
   int val = atoi(value);
   log_i("%s = %d", variable, val);
+
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = 0;
 
   if (!strcmp(variable, "framesize")) {
@@ -396,6 +652,12 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
 #if defined(LED_GPIO_NUM)
   else if (!strcmp(variable, "led_intensity")) {
     led_duty = val;
+    if (led_duty < 0) {
+      led_duty = 0;
+    }
+    if (led_duty > CONFIG_LED_MAX_INTENSITY) {
+      led_duty = CONFIG_LED_MAX_INTENSITY;
+    }
     if (isStreaming) {
       enable_led(true);
     }
@@ -410,6 +672,9 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
     return httpd_resp_send_500(req);
   }
 
+  // Direct /control change means profile is no longer canonical base/day/night.
+  snprintf(active_profile, sizeof(active_profile), "%s", "custom");
+
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, NULL, 0);
 }
@@ -419,41 +684,22 @@ static int print_reg(char *p, char *end, sensor_t *s, uint16_t reg, uint32_t mas
 }
 
 static esp_err_t status_handler(httpd_req_t *req) {
-  static char json_response[1024];
+  static char json_response[1100];
 
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    log_e("Camera sensor not found");
+    return httpd_resp_send_500(req);
+  }
+
   char *p = json_response;
   char *end = json_response + sizeof(json_response);
   *p++ = '{';
 
-  if (s->id.PID == OV5640_PID || s->id.PID == OV3660_PID) {
-    for (int reg = 0x3400; reg < 0x3406; reg += 2) {
-      p += print_reg(p, end, s, reg, 0xFFF);  //12 bit
-    }
-    p += print_reg(p, end, s, 0x3406, 0xFF);
-
-    p += print_reg(p, end, s, 0x3500, 0xFFFF0);  //16 bit
-    p += print_reg(p, end, s, 0x3503, 0xFF);
-    p += print_reg(p, end, s, 0x350a, 0x3FF);   //10 bit
-    p += print_reg(p, end, s, 0x350c, 0xFFFF);  //16 bit
-
-    for (int reg = 0x5480; reg <= 0x5490; reg++) {
-      p += print_reg(p, end, s, reg, 0xFF);
-    }
-
-    for (int reg = 0x5380; reg <= 0x538b; reg++) {
-      p += print_reg(p, end, s, reg, 0xFF);
-    }
-
-    for (int reg = 0x5580; reg < 0x558a; reg++) {
-      p += print_reg(p, end, s, reg, 0xFF);
-    }
-    p += print_reg(p, end, s, 0x558a, 0x1FF);  //9 bit
-  } else if (s->id.PID == OV2640_PID) {
-    p += print_reg(p, end, s, 0xd3, 0xFF);
-    p += print_reg(p, end, s, 0x111, 0xFF);
-    p += print_reg(p, end, s, 0x132, 0xFF);
-  }
+  // OV2640-only firmware profile.
+  p += print_reg(p, end, s, 0xd3, 0xFF);
+  p += print_reg(p, end, s, 0x111, 0xFF);
+  p += print_reg(p, end, s, 0x132, 0xFF);
 
   p += snprintf(p, end - p, "\"xclk\":%u,", s->xclk_freq_hz / 1000000);
   p += snprintf(p, end - p, "\"pixformat\":%u,", s->pixformat);
@@ -481,17 +727,161 @@ static esp_err_t status_handler(httpd_req_t *req) {
   p += snprintf(p, end - p, "\"hmirror\":%u,", s->status.hmirror);
   p += snprintf(p, end - p, "\"vflip\":%u,", s->status.vflip);
   p += snprintf(p, end - p, "\"dcw\":%u,", s->status.dcw);
-  p += snprintf(p, end - p, "\"colorbar\":%u", s->status.colorbar);
+  p += snprintf(p, end - p, "\"colorbar\":%u,", s->status.colorbar);
 #if defined(LED_GPIO_NUM)
-  p += snprintf(p, end - p, ",\"led_intensity\":%u", led_duty);
+  p += snprintf(p, end - p, "\"led_intensity\":%u,", led_duty);
 #else
-  p += snprintf(p, end - p, ",\"led_intensity\":%d", -1);
+  p += snprintf(p, end - p, "\"led_intensity\":%d,", -1);
 #endif
+  p += snprintf(p, end - p, "\"active_profile\":\"%s\"", active_profile);
+
   *p++ = '}';
   *p++ = 0;
+
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, json_response, strlen(json_response));
+}
+
+// Protected health endpoint for backend orchestration.
+static esp_err_t health_handler(httpd_req_t *req) {
+  if (require_valid_token(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+
+  sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return send_json_error(req, "500 Internal Server Error", "camera_sensor_unavailable");
+  }
+
+  IPAddress ip = WiFi.localIP();
+  int wifi_status = WiFi.status();
+
+  char body[768];
+  snprintf(
+    body,
+    sizeof(body),
+    "{\"ok\":true,"
+    "\"uptime_ms\":%lu,"
+    "\"free_heap\":%u,"
+    "\"wifi_connected\":%s,"
+    "\"wifi_status\":%d,"
+    "\"ip\":\"%u.%u.%u.%u\","
+    "\"streaming\":%s,"
+    "\"active_profile\":\"%s\","
+    "\"xclk_mhz\":%u,"
+    "\"framesize\":%u,"
+    "\"quality\":%u"
+#if defined(LED_GPIO_NUM)
+    ",\"led_intensity\":%u"
+#else
+    ",\"led_intensity\":-1"
+#endif
+    "}",
+    (unsigned long)millis(),
+    (unsigned int)ESP.getFreeHeap(),
+    (wifi_status == WL_CONNECTED) ? "true" : "false",
+    wifi_status,
+    ip[0], ip[1], ip[2], ip[3],
+    isStreaming ? "true" : "false",
+    active_profile,
+    s->xclk_freq_hz / 1000000,
+    s->status.framesize,
+    s->status.quality
+#if defined(LED_GPIO_NUM)
+    ,
+    led_duty
+#endif
+  );
+
+  return send_json(req, body);
+}
+
+// Protected profile endpoint for backend profile orchestration.
+// Usage: /profile?name=base|day|night&token=...
+static esp_err_t profile_handler(httpd_req_t *req) {
+  if (require_valid_token(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+
+  char profile_name[32] = {0};
+  bool has_name = get_query_value_no_fail(req, "name", profile_name, sizeof(profile_name));
+  if (!has_name) {
+    has_name = get_query_value_no_fail(req, "profile", profile_name, sizeof(profile_name));
+  }
+
+  if (!has_name || profile_name[0] == '\0') {
+    return send_json_error(req, "400 Bad Request", "missing_profile_name");
+  }
+
+  if (strcmp(profile_name, kProfileBase) != 0 &&
+      strcmp(profile_name, kProfileDay) != 0 &&
+      strcmp(profile_name, kProfileNight) != 0) {
+    return send_json_error(req, "400 Bad Request", "invalid_profile_name");
+  }
+
+  sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return send_json_error(req, "500 Internal Server Error", "camera_sensor_unavailable");
+  }
+
+  int rc = apply_named_profile(s, profile_name);
+  if (rc != 0) {
+    return send_json_error(req, "500 Internal Server Error", "profile_apply_failed");
+  }
+
+  char body[256];
+  snprintf(
+    body,
+    sizeof(body),
+    "{\"ok\":true,\"applied_profile\":\"%s\",\"xclk_mhz\":%u,\"framesize\":%u,\"quality\":%u"
+#if defined(LED_GPIO_NUM)
+    ",\"led_intensity\":%u"
+#else
+    ",\"led_intensity\":-1"
+#endif
+    "}",
+    active_profile,
+    s->xclk_freq_hz / 1000000,
+    s->status.framesize,
+    s->status.quality
+#if defined(LED_GPIO_NUM)
+    ,
+    led_duty
+#endif
+  );
+
+  return send_json(req, body);
+}
+
+// Protected reboot endpoint for backend-initiated planned maintenance.
+// Usage: /reboot?token=...&delay_ms=250
+static esp_err_t reboot_handler(httpd_req_t *req) {
+  if (require_valid_token(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+
+  int delay_ms = 250;
+  char delay_str[16] = {0};
+  if (get_query_value_no_fail(req, "delay_ms", delay_str, sizeof(delay_str))) {
+    int parsed = atoi(delay_str);
+    if (parsed < 100) {
+      parsed = 100;
+    }
+    if (parsed > 10000) {
+      parsed = 10000;
+    }
+    delay_ms = parsed;
+  }
+
+  char body[160];
+  snprintf(body, sizeof(body), "{\"ok\":true,\"restarting\":true,\"delay_ms\":%d}", delay_ms);
+  esp_err_t send_res = send_json(req, body);
+
+  delay((uint32_t)delay_ms);
+  ESP.restart();
+
+  return send_res;
 }
 
 static esp_err_t xclk_handler(httpd_req_t *req) {
@@ -501,6 +891,7 @@ static esp_err_t xclk_handler(httpd_req_t *req) {
   if (parse_get(req, &buf) != ESP_OK) {
     return ESP_FAIL;
   }
+
   if (httpd_query_key_value(buf, "xclk", _xclk, sizeof(_xclk)) != ESP_OK) {
     free(buf);
     httpd_resp_send_404(req);
@@ -509,13 +900,24 @@ static esp_err_t xclk_handler(httpd_req_t *req) {
   free(buf);
 
   int xclk = atoi(_xclk);
-  log_i("Set XCLK: %d MHz", xclk);
+  if (!is_allowed_xclk_mhz(xclk)) {
+    log_e("Rejected XCLK %d MHz (allowed: 15, 18, 24)", xclk);
+    return httpd_resp_send_500(req);
+  }
 
+  log_i("Set XCLK: %d MHz", xclk);
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = s->set_xclk(s, LEDC_TIMER_0, xclk);
   if (res) {
     return httpd_resp_send_500(req);
   }
+
+  // Direct xclk change leaves canonical base/day/night profile space.
+  snprintf(active_profile, sizeof(active_profile), "%s", "custom");
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, NULL, 0);
@@ -530,8 +932,9 @@ static esp_err_t reg_handler(httpd_req_t *req) {
   if (parse_get(req, &buf) != ESP_OK) {
     return ESP_FAIL;
   }
-  if (httpd_query_key_value(buf, "reg", _reg, sizeof(_reg)) != ESP_OK || httpd_query_key_value(buf, "mask", _mask, sizeof(_mask)) != ESP_OK
-      || httpd_query_key_value(buf, "val", _val, sizeof(_val)) != ESP_OK) {
+  if (httpd_query_key_value(buf, "reg", _reg, sizeof(_reg)) != ESP_OK ||
+      httpd_query_key_value(buf, "mask", _mask, sizeof(_mask)) != ESP_OK ||
+      httpd_query_key_value(buf, "val", _val, sizeof(_val)) != ESP_OK) {
     free(buf);
     httpd_resp_send_404(req);
     return ESP_FAIL;
@@ -544,10 +947,16 @@ static esp_err_t reg_handler(httpd_req_t *req) {
   log_i("Set Register: reg: 0x%02x, mask: 0x%02x, value: 0x%02x", reg, mask, val);
 
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = s->set_reg(s, reg, mask, val);
   if (res) {
     return httpd_resp_send_500(req);
   }
+
+  snprintf(active_profile, sizeof(active_profile), "%s", "custom");
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, NULL, 0);
@@ -561,7 +970,8 @@ static esp_err_t greg_handler(httpd_req_t *req) {
   if (parse_get(req, &buf) != ESP_OK) {
     return ESP_FAIL;
   }
-  if (httpd_query_key_value(buf, "reg", _reg, sizeof(_reg)) != ESP_OK || httpd_query_key_value(buf, "mask", _mask, sizeof(_mask)) != ESP_OK) {
+  if (httpd_query_key_value(buf, "reg", _reg, sizeof(_reg)) != ESP_OK ||
+      httpd_query_key_value(buf, "mask", _mask, sizeof(_mask)) != ESP_OK) {
     free(buf);
     httpd_resp_send_404(req);
     return ESP_FAIL;
@@ -570,11 +980,17 @@ static esp_err_t greg_handler(httpd_req_t *req) {
 
   int reg = atoi(_reg);
   int mask = atoi(_mask);
+
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = s->get_reg(s, reg, mask);
   if (res < 0) {
     return httpd_resp_send_500(req);
   }
+
   log_i("Get Register: reg: 0x%02x, mask: 0x%02x, value: 0x%02x", reg, mask, res);
 
   char buffer[20];
@@ -608,12 +1024,20 @@ static esp_err_t pll_handler(httpd_req_t *req) {
   int pclk = parse_get_var(buf, "pclk", 0);
   free(buf);
 
-  log_i("Set Pll: bypass: %d, mul: %d, sys: %d, root: %d, pre: %d, seld5: %d, pclken: %d, pclk: %d", bypass, mul, sys, root, pre, seld5, pclken, pclk);
+  log_i("Set PLL: bypass: %d, mul: %d, sys: %d, root: %d, pre: %d, seld5: %d, pclken: %d, pclk: %d",
+        bypass, mul, sys, root, pre, seld5, pclken, pclk);
+
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = s->set_pll(s, bypass, mul, sys, root, pre, seld5, pclken, pclk);
   if (res) {
     return httpd_resp_send_500(req);
   }
+
+  snprintf(active_profile, sizeof(active_profile), "%s", "custom");
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, NULL, 0);
@@ -641,14 +1065,21 @@ static esp_err_t win_handler(httpd_req_t *req) {
   free(buf);
 
   log_i(
-    "Set Window: Start: %d %d, End: %d %d, Offset: %d %d, Total: %d %d, Output: %d %d, Scale: %u, Binning: %u", startX, startY, endX, endY, offsetX, offsetY,
-    totalX, totalY, outputX, outputY, scale, binning  // codespell:ignore totaly
+    "Set Window: Start: %d %d, End: %d %d, Offset: %d %d, Total: %d %d, Output: %d %d, Scale: %u, Binning: %u",
+    startX, startY, endX, endY, offsetX, offsetY, totalX, totalY, outputX, outputY, scale, binning
   );
+
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    return httpd_resp_send_500(req);
+  }
+
   int res = s->set_res_raw(s, startX, startY, endX, endY, offsetX, offsetY, totalX, totalY, outputX, outputY, scale, binning);  // codespell:ignore totaly
   if (res) {
     return httpd_resp_send_500(req);
   }
+
+  snprintf(active_profile, sizeof(active_profile), "%s", "custom");
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, NULL, 0);
@@ -657,24 +1088,20 @@ static esp_err_t win_handler(httpd_req_t *req) {
 static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+
   sensor_t *s = esp_camera_sensor_get();
-  if (s != NULL) {
-    if (s->id.PID == OV3660_PID) {
-      return httpd_resp_send(req, (const char *)index_ov3660_html_gz, index_ov3660_html_gz_len);
-    } else if (s->id.PID == OV5640_PID) {
-      return httpd_resp_send(req, (const char *)index_ov5640_html_gz, index_ov5640_html_gz_len);
-    } else {
-      return httpd_resp_send(req, (const char *)index_ov2640_html_gz, index_ov2640_html_gz_len);
-    }
-  } else {
+  if (!s) {
     log_e("Camera sensor not found");
     return httpd_resp_send_500(req);
   }
+
+  // OV2640-only firmware page.
+  return httpd_resp_send(req, (const char *)index_ov2640_html_gz, index_ov2640_html_gz_len);
 }
 
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 20;
 
   httpd_uri_t index_uri = {
     .uri = "/",
@@ -693,6 +1120,45 @@ void startCameraServer() {
     .uri = "/status",
     .method = HTTP_GET,
     .handler = status_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
+  httpd_uri_t health_uri = {
+    .uri = "/health",
+    .method = HTTP_GET,
+    .handler = health_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
+  httpd_uri_t profile_uri = {
+    .uri = "/profile",
+    .method = HTTP_GET,
+    .handler = profile_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
+  httpd_uri_t reboot_uri = {
+    .uri = "/reboot",
+    .method = HTTP_GET,
+    .handler = reboot_handler,
     .user_ctx = NULL
 #ifdef CONFIG_HTTPD_WS_SUPPORT
     ,
@@ -824,8 +1290,12 @@ void startCameraServer() {
   log_i("Starting web server on port: '%u'", config.server_port);
   if (httpd_start(&camera_httpd, &config) == ESP_OK) {
     httpd_register_uri_handler(camera_httpd, &index_uri);
-    httpd_register_uri_handler(camera_httpd, &cmd_uri);
     httpd_register_uri_handler(camera_httpd, &status_uri);
+    httpd_register_uri_handler(camera_httpd, &health_uri);
+    httpd_register_uri_handler(camera_httpd, &profile_uri);
+    httpd_register_uri_handler(camera_httpd, &reboot_uri);
+
+    httpd_register_uri_handler(camera_httpd, &cmd_uri);
     httpd_register_uri_handler(camera_httpd, &capture_uri);
     httpd_register_uri_handler(camera_httpd, &bmp_uri);
 
@@ -847,6 +1317,8 @@ void startCameraServer() {
 void setupLedFlash() {
 #if defined(LED_GPIO_NUM)
   ledcAttach(LED_GPIO_NUM, 5000, 8);
+  led_duty = 0;
+  enable_led(false);
 #else
   log_i("LED flash is disabled -> LED_GPIO_NUM undefined");
 #endif

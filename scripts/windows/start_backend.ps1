@@ -42,6 +42,7 @@ Write-Host "Starting backend on ${apiHost}:$port ..."
 Write-Host "Backend logs: .\data\logs\backend.log"
 Write-Host "Access-request spam is disabled (--no-access-log) to reduce detector polling noise."
 Write-Host "Application/error logs are still written to console and backend.log."
+Write-Host "Graceful shutdown timeout is set to 4s to avoid hangs from long-lived stream clients."
 
 $reloadFlag = @()
 if ($DevReload) {
@@ -57,4 +58,4 @@ if ($WithDetector) {
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $detectorCmd | Out-Null
 }
 
-& $venvPython -m uvicorn app.backend.main:app --host $apiHost --port $port @reloadFlag --no-access-log --log-config $logConfigPath
+& $venvPython -m uvicorn app.backend.main:app --host $apiHost --port $port @reloadFlag --no-access-log --timeout-graceful-shutdown 4 --log-config $logConfigPath

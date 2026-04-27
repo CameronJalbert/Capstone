@@ -23,7 +23,7 @@ LIFECYCLE_STATE_INDEX = {state: idx for idx, state in enumerate(LIFECYCLE_STATES
 DEFAULT_LIFECYCLE_STATE = "detected"
 
 DEFAULT_SEVERITY_POLICY_VERSION = "v1"
-DEFAULT_RETENTION_POLICY_VERSION = "v1"
+DEFAULT_RETENTION_POLICY_VERSION = "v2_confidence_multiplier"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm"}
 JOB_STATUSES: tuple[str, ...] = (
@@ -34,6 +34,21 @@ JOB_STATUSES: tuple[str, ...] = (
     "failed",
     "cancelled",
 )
+CAMERA_MODES: tuple[str, ...] = (
+    "base",
+    "manual_saved",
+    "manual_temporary",
+    "adaptive_capture",
+    "auto_day_night_profile",
+)
+CAMERA_SYNC_STATUSES: tuple[str, ...] = (
+    "in_sync",
+    "drift_detected",
+    "reapplying",
+    "camera_unavailable",
+)
+DEFAULT_CAMERA_MODE = "base"
+DEFAULT_CAMERA_SYNC_STATUS = "camera_unavailable"
 
 
 def resolve_sqlite_path(settings: dict[str, Any], root: Path) -> Path:
@@ -138,20 +153,12 @@ def compute_retention_days(confidence: Any, lifecycle_state: Any) -> int:
     lifecycle = normalize_lifecycle_state(lifecycle_state)
     if lifecycle in {"deleted", "expired"}:
         return 0
+    if lifecycle == "saved":
+        # Saved items are retention-exempt until manually deleted.
+        return 365_000
     conf = _normalized_confidence(confidence)
-    if conf >= 0.70:
-        days = 7
-    elif conf >= 0.50:
-        days = 5
-    else:
-        days = 3
-    if lifecycle == "alerted":
-        days += 1
-    elif lifecycle == "saved":
-        days = max(days, 30)
-    elif lifecycle == "media_attached":
-        days = max(days, 4)
-    return int(days)
+    days = 7.0 * conf
+    return max(1, int(round(days)))
 
 
 def compute_delete_after_ts(ts_utc: Any, retention_days: int, now_utc: str | None = None) -> str:
@@ -493,6 +500,131 @@ def _migration_008_add_background_jobs_table(connection: sqlite3.Connection) -> 
     )
 
 
+def _default_camera_mode_canonical_state() -> dict[str, Any]:
+    return {
+        "modes": {
+            "base": {"profile": "base", "settings": {}},
+            "manual_saved": {"settings": {}},
+            "manual_temporary": {"settings": {}},
+            "adaptive_capture": {
+                "settings": {
+                    "xclk": 15,
+                    "brightness": 0,
+                    "contrast": 0,
+                    "saturation": 0,
+                    "led_intensity": 0,
+                },
+                "runtime": {
+                    "low_light_active": False,
+                    "last_xclk_change_ts_utc": "",
+                    "last_xclk_attempt_ts_utc": "",
+                    "last_led_change_ts_utc": "",
+                    "last_tweak_ts_utc": "",
+                },
+            },
+            "auto_day_night_profile": {
+                "day_profile": "day",
+                "night_profile": "night",
+            },
+        },
+        "metadata": {
+            "last_adopted_mode": "",
+            "last_adopted_ts_utc": "",
+        },
+    }
+
+
+def _migration_009_add_camera_mode_state_table(connection: sqlite3.Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS camera_mode_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            active_mode TEXT NOT NULL DEFAULT 'base',
+            mode_revision INTEGER NOT NULL DEFAULT 1,
+            sync_status TEXT NOT NULL DEFAULT 'camera_unavailable',
+            last_reconcile_action TEXT NOT NULL DEFAULT 'initialized',
+            canonical_state_json TEXT NOT NULL DEFAULT '{}',
+            last_camera_status_json TEXT NOT NULL DEFAULT '{}',
+            last_apply_result_json TEXT NOT NULL DEFAULT '{}',
+            last_error TEXT,
+            created_ts_utc TEXT NOT NULL,
+            updated_ts_utc TEXT NOT NULL
+        );
+        """
+    )
+    now_utc = _utc_now()
+    cursor.execute("SELECT id FROM camera_mode_state WHERE id = 1;")
+    if cursor.fetchone() is None:
+        cursor.execute(
+            """
+            INSERT INTO camera_mode_state (
+                id, active_mode, mode_revision, sync_status, last_reconcile_action,
+                canonical_state_json, last_camera_status_json, last_apply_result_json,
+                last_error, created_ts_utc, updated_ts_utc
+            )
+            VALUES (1, 'base', 1, 'camera_unavailable', 'initialized', ?, '{}', '{}', NULL, ?, ?);
+            """,
+            (
+                json.dumps(_default_camera_mode_canonical_state(), separators=(",", ":"), sort_keys=True),
+                now_utc,
+                now_utc,
+            ),
+        )
+
+
+def _migration_010_add_saved_and_restart_tables(connection: sqlite3.Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saved_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
+            event_uid TEXT,
+            title TEXT NOT NULL,
+            source_type TEXT NOT NULL DEFAULT 'event',
+            snapshot_path TEXT,
+            clip_path TEXT NOT NULL,
+            notes TEXT,
+            created_ts_utc TEXT NOT NULL,
+            updated_ts_utc TEXT NOT NULL,
+            deleted_ts_utc TEXT
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_items_created
+        ON saved_items (created_ts_utc DESC);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_items_event_id
+        ON saved_items (event_id);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS server_restart_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            reason TEXT,
+            trigger TEXT,
+            action TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_server_restart_events_ts
+        ON server_restart_events (ts_utc DESC);
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationFunc]] = [
     (1, "create_event_records_base", _migration_001_create_event_records_base),
     (2, "add_class_id_column", _migration_002_add_class_id_column),
@@ -502,6 +634,8 @@ MIGRATIONS: list[tuple[int, str, MigrationFunc]] = [
     (6, "add_canonical_and_policy_columns", _migration_006_add_canonical_and_policy_columns),
     (7, "backfill_policy_and_add_indexes", _migration_007_backfill_policy_and_add_indexes),
     (8, "add_background_jobs_table", _migration_008_add_background_jobs_table),
+    (9, "add_camera_mode_state_table", _migration_009_add_camera_mode_state_table),
+    (10, "add_saved_and_restart_tables", _migration_010_add_saved_and_restart_tables),
 ]
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -1082,6 +1216,188 @@ def background_job_stats(db_path: Path) -> dict[str, Any]:
         connection.close()
 
 
+def _camera_mode_from_text(value: Any) -> str:
+    text = _normalized_text(value).lower()
+    return text if text in CAMERA_MODES else DEFAULT_CAMERA_MODE
+
+
+def _camera_sync_status_from_text(value: Any) -> str:
+    text = _normalized_text(value).lower()
+    return text if text in CAMERA_SYNC_STATUSES else DEFAULT_CAMERA_SYNC_STATUS
+
+
+def _json_to_object(value: Any, *, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    text = _normalized_text(value)
+    if not text:
+        return dict(default or {})
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        return dict(default or {})
+    return decoded if isinstance(decoded, dict) else dict(default or {})
+
+
+def _normalize_camera_mode_canonical_state(raw: Any) -> dict[str, Any]:
+    state = _default_camera_mode_canonical_state()
+    candidate = raw if isinstance(raw, dict) else {}
+    modes = candidate.get("modes")
+    if isinstance(modes, dict):
+        for mode_name in state["modes"]:
+            incoming = modes.get(mode_name)
+            if isinstance(incoming, dict):
+                merged = dict(state["modes"][mode_name])
+                merged.update(incoming)
+                state["modes"][mode_name] = merged
+    metadata = candidate.get("metadata")
+    if isinstance(metadata, dict):
+        merged_meta = dict(state["metadata"])
+        merged_meta.update(metadata)
+        state["metadata"] = merged_meta
+    return state
+
+
+def _camera_mode_row_to_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "active_mode": _camera_mode_from_text(row["active_mode"]),
+        "mode_revision": int(row["mode_revision"] or 1),
+        "sync_status": _camera_sync_status_from_text(row["sync_status"]),
+        "last_reconcile_action": _normalized_text(row["last_reconcile_action"]) or "unknown",
+        "canonical_state": _normalize_camera_mode_canonical_state(_json_to_object(row["canonical_state_json"])),
+        "last_camera_status": _json_to_object(row["last_camera_status_json"]),
+        "last_apply_result": _json_to_object(row["last_apply_result_json"]),
+        "last_error": _normalized_text(row["last_error"]),
+        "created_ts_utc": row["created_ts_utc"],
+        "updated_ts_utc": row["updated_ts_utc"],
+    }
+
+
+def _ensure_camera_mode_state_row(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "camera_mode_state"):
+        return
+    cursor = connection.cursor()
+    cursor.execute("SELECT id FROM camera_mode_state WHERE id = 1;")
+    if cursor.fetchone() is not None:
+        return
+    now_utc = _utc_now()
+    cursor.execute(
+        """
+        INSERT INTO camera_mode_state (
+            id, active_mode, mode_revision, sync_status, last_reconcile_action,
+            canonical_state_json, last_camera_status_json, last_apply_result_json,
+            last_error, created_ts_utc, updated_ts_utc
+        )
+        VALUES (1, 'base', 1, 'camera_unavailable', 'initialized', ?, '{}', '{}', NULL, ?, ?);
+        """,
+        (
+            json.dumps(_default_camera_mode_canonical_state(), separators=(",", ":"), sort_keys=True),
+            now_utc,
+            now_utc,
+        ),
+    )
+    connection.commit()
+
+
+def fetch_camera_mode_state(db_path: Path) -> dict[str, Any]:
+    """Return canonical camera mode state payload used by camera-control orchestration."""
+    connection = _connect(db_path)
+    try:
+        _ensure_camera_mode_state_row(connection)
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT active_mode, mode_revision, sync_status, last_reconcile_action,
+                   canonical_state_json, last_camera_status_json, last_apply_result_json,
+                   last_error, created_ts_utc, updated_ts_utc
+            FROM camera_mode_state
+            WHERE id = 1;
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("camera_mode_state row is missing after initialization")
+        return _camera_mode_row_to_payload(row)
+    finally:
+        connection.close()
+
+
+def save_camera_mode_state(
+    db_path: Path,
+    state: dict[str, Any],
+    *,
+    bump_revision: bool = False,
+) -> dict[str, Any]:
+    """Persist canonical camera mode state and return normalized saved payload."""
+    connection = _connect(db_path)
+    try:
+        _ensure_camera_mode_state_row(connection)
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT active_mode, mode_revision, sync_status, last_reconcile_action,
+                   canonical_state_json, last_camera_status_json, last_apply_result_json,
+                   last_error, created_ts_utc, updated_ts_utc
+            FROM camera_mode_state
+            WHERE id = 1;
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("camera_mode_state row is missing after initialization")
+        current = _camera_mode_row_to_payload(row)
+        mode_revision = int(current["mode_revision"])
+        if bump_revision:
+            mode_revision += 1
+        merged = {
+            "active_mode": _camera_mode_from_text(state.get("active_mode", current["active_mode"])),
+            "mode_revision": mode_revision,
+            "sync_status": _camera_sync_status_from_text(state.get("sync_status", current["sync_status"])),
+            "last_reconcile_action": _normalized_text(
+                state.get("last_reconcile_action", current["last_reconcile_action"])
+            )
+            or "unknown",
+            "canonical_state": _normalize_camera_mode_canonical_state(
+                state.get("canonical_state", current["canonical_state"])
+            ),
+            "last_camera_status": (
+                state["last_camera_status"]
+                if isinstance(state.get("last_camera_status"), dict)
+                else current["last_camera_status"]
+            ),
+            "last_apply_result": (
+                state["last_apply_result"]
+                if isinstance(state.get("last_apply_result"), dict)
+                else current["last_apply_result"]
+            ),
+            "last_error": _normalized_text(state.get("last_error", current["last_error"])) or "",
+            "created_ts_utc": current["created_ts_utc"],
+            "updated_ts_utc": _utc_now(),
+        }
+        cursor.execute(
+            """
+            UPDATE camera_mode_state
+            SET active_mode=?, mode_revision=?, sync_status=?, last_reconcile_action=?,
+                canonical_state_json=?, last_camera_status_json=?, last_apply_result_json=?,
+                last_error=?, updated_ts_utc=?
+            WHERE id = 1;
+            """,
+            (
+                merged["active_mode"],
+                int(merged["mode_revision"]),
+                merged["sync_status"],
+                merged["last_reconcile_action"],
+                json.dumps(merged["canonical_state"], separators=(",", ":"), sort_keys=True),
+                json.dumps(merged["last_camera_status"], separators=(",", ":"), sort_keys=True),
+                json.dumps(merged["last_apply_result"], separators=(",", ":"), sort_keys=True),
+                merged["last_error"] or None,
+                merged["updated_ts_utc"],
+            ),
+        )
+        connection.commit()
+        return merged
+    finally:
+        connection.close()
+
+
 def import_ndjson_events_if_sqlite_empty(db_path: Path, events_file: Path) -> int:
     if not events_file.exists():
         return 0
@@ -1116,6 +1432,68 @@ def backfill_event_policy_fields(db_path: Path, *, only_missing: bool = True) ->
         updated = _backfill_policy_fields(connection, only_missing=only_missing)
         connection.commit()
         return {"updated_records": updated, "only_missing": bool(only_missing)}
+    finally:
+        connection.close()
+
+
+def reset_event_retention_from_now(
+    db_path: Path,
+    *,
+    include_saved: bool = False,
+    now_utc: str | None = None,
+) -> dict[str, Any]:
+    """Reset existing event delete-after timers so countdown starts from now."""
+    resolved_now = now_utc or _utc_now()
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        if include_saved:
+            cursor.execute(
+                """
+                SELECT id, confidence, lifecycle_state
+                FROM event_records
+                WHERE lifecycle_state NOT IN ('deleted', 'expired');
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, confidence, lifecycle_state
+                FROM event_records
+                WHERE lifecycle_state NOT IN ('deleted', 'expired', 'saved');
+                """
+            )
+        rows = cursor.fetchall()
+        updated = 0
+        for row in rows:
+            lifecycle_state = normalize_lifecycle_state(row["lifecycle_state"])
+            retention_days = compute_retention_days(row["confidence"], lifecycle_state)
+            delete_after_ts_utc = compute_delete_after_ts(resolved_now, retention_days, now_utc=resolved_now)
+            retention_basis = (
+                f"{compute_retention_basis(row['confidence'], lifecycle_state, retention_days)};"
+                "reset=from_now"
+            )
+            cursor.execute(
+                """
+                UPDATE event_records
+                SET retention_days=?, delete_after_ts_utc=?, retention_basis=?, retention_updated_ts_utc=?
+                WHERE id=?;
+                """,
+                (
+                    int(retention_days),
+                    delete_after_ts_utc,
+                    retention_basis,
+                    resolved_now,
+                    int(row["id"]),
+                ),
+            )
+            updated += 1
+        connection.commit()
+        return {
+            "updated_records": updated,
+            "include_saved": bool(include_saved),
+            "reset_from_utc": resolved_now,
+        }
     finally:
         connection.close()
 
@@ -1236,6 +1614,327 @@ def update_event_lifecycle_state(db_path: Path, event_id: int, next_state: str) 
         return cursor.rowcount == 1
     finally:
         connection.close()
+
+
+def create_saved_item(
+    db_path: Path,
+    *,
+    clip_path: str,
+    snapshot_path: str | None = None,
+    title: str | None = None,
+    source_type: str = "event",
+    event_id: int | None = None,
+    event_uid: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Create one saved-media item and return normalized payload."""
+    now_utc = _utc_now()
+    normalized_clip = _normalize_media_ref(clip_path)
+    if not normalized_clip:
+        raise ValueError("clip_path is required")
+    normalized_snapshot = _normalize_media_ref(snapshot_path)
+    normalized_title = _normalized_text(title) or f"Saved {Path(normalized_clip).stem}"
+    normalized_source = _normalized_text(source_type).lower() or "event"
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO saved_items (
+                event_id, event_uid, title, source_type, snapshot_path, clip_path, notes,
+                created_ts_utc, updated_ts_utc, deleted_ts_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);
+            """,
+            (
+                int(event_id) if event_id is not None else None,
+                _normalized_text(event_uid) or None,
+                normalized_title,
+                normalized_source,
+                normalized_snapshot,
+                normalized_clip,
+                _normalized_text(notes) or None,
+                now_utc,
+                now_utc,
+            ),
+        )
+        saved_id = int(cursor.lastrowid)
+        connection.commit()
+        return {
+            "id": saved_id,
+            "event_id": int(event_id) if event_id is not None else None,
+            "event_uid": _normalized_text(event_uid) or None,
+            "title": normalized_title,
+            "source_type": normalized_source,
+            "snapshot": normalized_snapshot,
+            "clip": normalized_clip,
+            "notes": _normalized_text(notes) or "",
+            "created_ts_utc": now_utc,
+            "updated_ts_utc": now_utc,
+        }
+    finally:
+        connection.close()
+
+
+def fetch_saved_item_by_id(db_path: Path, saved_id: int) -> dict[str, Any] | None:
+    saved_id = int(saved_id)
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, event_id, event_uid, title, source_type, snapshot_path, clip_path, notes, created_ts_utc, updated_ts_utc
+            FROM saved_items
+            WHERE id = ? AND deleted_ts_utc IS NULL;
+            """,
+            (saved_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "event_id": int(row["event_id"]) if row["event_id"] is not None else None,
+            "event_uid": _normalized_text(row["event_uid"]) or None,
+            "title": _normalized_text(row["title"]) or f"Saved #{saved_id}",
+            "source_type": _normalized_text(row["source_type"]) or "event",
+            "snapshot": _normalize_media_ref(row["snapshot_path"]),
+            "clip": _normalize_media_ref(row["clip_path"]),
+            "notes": _normalized_text(row["notes"]),
+            "created_ts_utc": _normalized_text(row["created_ts_utc"]),
+            "updated_ts_utc": _normalized_text(row["updated_ts_utc"]),
+        }
+    finally:
+        connection.close()
+
+
+def list_saved_items(
+    db_path: Path,
+    *,
+    limit: int = 24,
+    offset: int = 0,
+    q: str = "",
+    range_key: str = "all",
+    sort_key: str = "newest",
+) -> dict[str, Any]:
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    query = _normalized_text(q).lower()
+    normalized_range = _normalized_text(range_key).lower()
+    if normalized_range not in {"all", "24h", "7d", "30d"}:
+        normalized_range = "all"
+    normalized_sort = _normalized_text(sort_key).lower()
+    if normalized_sort not in {"newest", "oldest", "title"}:
+        normalized_sort = "newest"
+    range_seconds: int | None = None
+    if normalized_range == "24h":
+        range_seconds = 24 * 3600
+    elif normalized_range == "7d":
+        range_seconds = 7 * 24 * 3600
+    elif normalized_range == "30d":
+        range_seconds = 30 * 24 * 3600
+
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, event_id, event_uid, title, source_type, snapshot_path, clip_path, notes, created_ts_utc, updated_ts_utc
+            FROM saved_items
+            WHERE deleted_ts_utc IS NULL;
+            """
+        )
+        rows = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT id, snapshot_path, clip_path
+            FROM event_records
+            WHERE lifecycle_state NOT IN ('deleted', 'expired');
+            """
+        )
+        event_rows = cursor.fetchall()
+        snapshot_by_event_id: dict[int, str] = {}
+        snapshot_by_clip_basename: dict[str, str] = {}
+        for event_row in event_rows:
+            event_id = int(event_row["id"])
+            snapshot_ref = _normalize_media_ref(event_row["snapshot_path"])
+            clip_ref = _normalize_media_ref(event_row["clip_path"])
+            if snapshot_ref:
+                snapshot_by_event_id[event_id] = snapshot_ref
+                if clip_ref:
+                    snapshot_by_clip_basename[Path(clip_ref).name] = snapshot_ref
+        now_dt = datetime.now(timezone.utc)
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            title = _normalized_text(row["title"]) or f"Saved #{int(row['id'])}"
+            source = _normalized_text(row["source_type"]) or "event"
+            event_uid = _normalized_text(row["event_uid"])
+            notes = _normalized_text(row["notes"])
+            created_ts = _normalized_text(row["created_ts_utc"])
+            if query:
+                haystack = " ".join([title, source, event_uid, notes]).lower()
+                if query not in haystack:
+                    continue
+            if range_seconds is not None:
+                created_dt = _parse_utc(created_ts)
+                if created_dt is None:
+                    continue
+                age_seconds = (now_dt - created_dt).total_seconds()
+                if age_seconds < 0 or age_seconds > float(range_seconds):
+                    continue
+            event_id = int(row["event_id"]) if row["event_id"] is not None else None
+            snapshot_ref = _normalize_media_ref(row["snapshot_path"])
+            if not snapshot_ref:
+                if event_id is not None and event_id in snapshot_by_event_id:
+                    snapshot_ref = snapshot_by_event_id[event_id]
+                else:
+                    clip_ref = _normalize_media_ref(row["clip_path"])
+                    clip_base = Path(clip_ref).name if clip_ref else ""
+                    if clip_base and clip_base in snapshot_by_clip_basename:
+                        snapshot_ref = snapshot_by_clip_basename[clip_base]
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "event_id": event_id,
+                    "event_uid": event_uid or None,
+                    "title": title,
+                    "source_type": source,
+                    "snapshot": snapshot_ref,
+                    "clip": _normalize_media_ref(row["clip_path"]),
+                    "notes": notes,
+                    "created_ts_utc": created_ts,
+                    "updated_ts_utc": _normalized_text(row["updated_ts_utc"]),
+                }
+            )
+
+        if normalized_sort == "oldest":
+            items.sort(key=lambda item: _normalized_text(item.get("created_ts_utc")))
+        elif normalized_sort == "title":
+            items.sort(key=lambda item: _normalized_text(item.get("title")).lower())
+        else:
+            items.sort(key=lambda item: _normalized_text(item.get("created_ts_utc")), reverse=True)
+
+        total = len(items)
+        page_items = items[offset : offset + limit]
+        pages = max(1, (total + limit - 1) // limit)
+        page = min(pages, max(1, (offset // limit) + 1))
+        return {
+            "saved_items": page_items,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+                "page": page,
+                "pages": pages,
+                "has_prev": offset > 0,
+                "has_next": (offset + limit) < total,
+            },
+            "filters": {
+                "q": query,
+                "range": normalized_range,
+                "sort": normalized_sort,
+            },
+        }
+    finally:
+        connection.close()
+
+
+def mark_saved_item_deleted(db_path: Path, saved_id: int) -> dict[str, Any] | None:
+    saved_id = int(saved_id)
+    existing = fetch_saved_item_by_id(db_path, saved_id)
+    if existing is None:
+        return None
+    now_utc = _utc_now()
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE saved_items SET deleted_ts_utc=?, updated_ts_utc=? WHERE id=?;",
+            (now_utc, now_utc, saved_id),
+        )
+        connection.commit()
+        existing["deleted_ts_utc"] = now_utc
+        return existing
+    finally:
+        connection.close()
+
+
+def insert_server_restart_event(
+    db_path: Path,
+    *,
+    classification: str,
+    reason: str = "",
+    trigger: str = "",
+    action: str = "",
+    metadata: dict[str, Any] | None = None,
+    ts_utc: str | None = None,
+) -> int:
+    """Persist one restart/outage classification event."""
+    normalized_class = _normalized_text(classification).lower() or "unexpected"
+    if normalized_class not in {"planned", "unexpected"}:
+        normalized_class = "unexpected"
+    resolved_ts = _normalized_text(ts_utc) or _utc_now()
+    metadata_json = json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True)
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO server_restart_events (ts_utc, classification, reason, trigger, action, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                resolved_ts,
+                normalized_class,
+                _normalized_text(reason)[:200],
+                _normalized_text(trigger)[:200],
+                _normalized_text(action)[:64],
+                metadata_json,
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
+def fetch_recent_server_restart_events(db_path: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 500))
+    connection = _connect(db_path)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, ts_utc, classification, reason, trigger, action, metadata_json
+            FROM server_restart_events
+            ORDER BY id DESC
+            LIMIT ?;
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            metadata_text = _normalized_text(row["metadata_json"]) or "{}"
+            try:
+                metadata = json.loads(metadata_text)
+            except json.JSONDecodeError:
+                metadata = {"_raw": metadata_text}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "ts_utc": _normalized_text(row["ts_utc"]),
+                    "classification": _normalized_text(row["classification"]) or "unexpected",
+                    "reason": _normalized_text(row["reason"]),
+                    "trigger": _normalized_text(row["trigger"]),
+                    "action": _normalized_text(row["action"]),
+                    "metadata": metadata,
+                }
+            )
+        return items
+    finally:
+        connection.close()
+
 
 def media_integrity_report(
     db_path: Path,
@@ -1401,7 +2100,7 @@ def run_retention_cull(
     try:
         cursor = connection.cursor()
         cursor.execute(
-            "SELECT id, event_uid, snapshot_path, clip_path, lifecycle_state, delete_after_ts_utc FROM event_records WHERE lifecycle_state NOT IN ('deleted');"
+            "SELECT id, event_uid, snapshot_path, clip_path, lifecycle_state, delete_after_ts_utc FROM event_records WHERE lifecycle_state NOT IN ('deleted', 'saved');"
         )
         rows = cursor.fetchall()
 
@@ -1481,11 +2180,11 @@ def retention_summary(db_path: Path, *, now_utc: str | None = None) -> dict[str,
         expired_events = int(row["expired_count"] or 0)
 
         cursor.execute(
-            "SELECT id, event_uid, delete_after_ts_utc, lifecycle_state FROM event_records WHERE lifecycle_state NOT IN ('deleted') ORDER BY delete_after_ts_utc ASC LIMIT 1;"
+            "SELECT id, event_uid, delete_after_ts_utc, lifecycle_state FROM event_records WHERE lifecycle_state NOT IN ('deleted', 'saved') ORDER BY delete_after_ts_utc ASC LIMIT 1;"
         )
         next_due_row = cursor.fetchone()
 
-        cursor.execute("SELECT delete_after_ts_utc FROM event_records WHERE lifecycle_state NOT IN ('deleted') AND delete_after_ts_utc IS NOT NULL;")
+        cursor.execute("SELECT delete_after_ts_utc FROM event_records WHERE lifecycle_state NOT IN ('deleted', 'saved') AND delete_after_ts_utc IS NOT NULL;")
         due_now = 0
         for due_row in cursor.fetchall():
             due_ts = _parse_utc(due_row["delete_after_ts_utc"])
@@ -1573,6 +2272,27 @@ def sqlite_status(db_path: Path) -> dict[str, Any]:
                 "cancelled": int(jobs["cancelled"] or 0),
                 "ready_now": int(jobs["ready_now"] or 0),
             }
+        camera_mode = {
+            "active_mode": DEFAULT_CAMERA_MODE,
+            "mode_revision": 0,
+            "sync_status": DEFAULT_CAMERA_SYNC_STATUS,
+        }
+        saved_items_count = 0
+        if _table_exists(connection, "camera_mode_state"):
+            _ensure_camera_mode_state_row(connection)
+            cursor.execute(
+                "SELECT active_mode, mode_revision, sync_status FROM camera_mode_state WHERE id = 1;"
+            )
+            mode_row = cursor.fetchone()
+            if mode_row is not None:
+                camera_mode = {
+                    "active_mode": _camera_mode_from_text(mode_row["active_mode"]),
+                    "mode_revision": int(mode_row["mode_revision"] or 0),
+                    "sync_status": _camera_sync_status_from_text(mode_row["sync_status"]),
+                }
+        if _table_exists(connection, "saved_items"):
+            cursor.execute("SELECT COUNT(*) FROM saved_items WHERE deleted_ts_utc IS NULL;")
+            saved_items_count = int(cursor.fetchone()[0] or 0)
         return {
             "db_exists": True,
             "event_records": count,
@@ -1582,6 +2302,8 @@ def sqlite_status(db_path: Path) -> dict[str, Any]:
             "missing_severity": int(policy["missing_severity"] or 0),
             "missing_retention": int(policy["missing_retention"] or 0),
             "background_jobs": job_totals,
+            "camera_mode_state": camera_mode,
+            "saved_items": saved_items_count,
         }
     finally:
         connection.close()

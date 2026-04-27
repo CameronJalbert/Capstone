@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Doorbell Camera Control Panel</title>
+    <title>LAN CAM Control Panel</title>
     <style>
       :root {
         --bg: #081021;
@@ -25,6 +25,41 @@
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         background: radial-gradient(circle at top right, var(--bg2), var(--bg));
         color: var(--text);
+      }
+
+      .server-action-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 25000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(248, 113, 113, 0.65);
+        background: linear-gradient(90deg, rgba(127, 29, 29, 0.95), rgba(185, 28, 28, 0.95));
+        color: #ffe4e6;
+        font-size: 0.9rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        transform: translateY(-120%);
+        transition: transform 0.2s ease;
+      }
+
+      .server-action-banner.show {
+        transform: translateY(0);
+      }
+
+      .server-action-countdown {
+        font-variant-numeric: tabular-nums;
+        background: rgba(15, 27, 54, 0.35);
+        border: 1px solid rgba(255, 228, 230, 0.45);
+        border-radius: 999px;
+        padding: 2px 8px;
+        min-width: 54px;
+        text-align: center;
       }
 
       .wrap {
@@ -64,17 +99,21 @@
         border-radius: 999px;
         padding: 8px 14px;
         cursor: pointer;
+        transition: transform 0.12s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      }
+
+      .tab-btn:hover {
+        border-color: rgba(96, 165, 250, 0.9);
+        background: rgba(22, 38, 74, 0.9);
+      }
+
+      .tab-btn:active {
+        transform: translateY(1px) scale(0.99);
       }
 
       .tab-btn.active {
         border-color: var(--accent2);
         box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.4) inset;
-      }
-
-      .tab-btn.alert {
-        border-color: rgba(248, 113, 113, 0.9);
-        color: #fca5a5;
-        box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.45) inset;
       }
 
       .panel {
@@ -547,6 +586,86 @@
         flex-wrap: wrap;
       }
 
+      .saved-video-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 12100;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        background: rgba(3, 8, 18, 0.74);
+        backdrop-filter: blur(3px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.24s ease;
+      }
+
+      .saved-video-modal.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .saved-video-stage {
+        width: min(96vw, 980px);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(15, 27, 54, 0.96);
+        padding: 12px;
+      }
+
+      .saved-video-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .saved-video-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .saved-video-body {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 220px;
+      }
+
+      .saved-video-player {
+        width: min(100%, 860px);
+        max-height: 72vh;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #000;
+      }
+
+      .saved-video-nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 42px;
+        height: 42px;
+        border-radius: 999px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        font-size: 1.15rem;
+        font-weight: 700;
+        z-index: 2;
+      }
+
+      .saved-video-nav.left {
+        left: 8px;
+      }
+
+      .saved-video-nav.right {
+        right: 8px;
+      }
+
       .log-toolbar {
         display: flex;
         align-items: center;
@@ -578,10 +697,6 @@
       .log-source-name {
         font-size: 0.92rem;
         font-weight: 600;
-      }
-
-      .log-source-name.error {
-        color: #fca5a5;
       }
 
       .log-source-sub {
@@ -664,6 +779,32 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 7px 10px;
+        transition: transform 0.12s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled),
+      select:hover,
+      input:hover {
+        border-color: rgba(96, 165, 250, 0.92);
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35) inset;
+      }
+
+      button:active:not(:disabled),
+      .media-card:active,
+      .event-card:active,
+      .log-nav-btn:active {
+        transform: translateY(1px) scale(0.99);
+      }
+
+      button:disabled,
+      select:disabled,
+      input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
       }
 
       .controls {
@@ -674,6 +815,322 @@
         flex-wrap: wrap;
       }
 
+      .profile-quick-help {
+        margin-top: -6px;
+        margin-bottom: 10px;
+        font-size: 0.78rem;
+      }
+
+      .reboot-controls {
+        gap: 8px;
+      }
+
+      .reboot-delay-input {
+        min-width: 92px;
+        width: 92px;
+      }
+
+      .automation-state-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .auto-config-anchor {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .auto-config-trigger {
+        font-size: 0.75rem;
+        padding: 3px 8px;
+        border-radius: 999px;
+      }
+
+      .auto-config-popover {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 8px);
+        min-width: 240px;
+        max-width: min(320px, 82vw);
+        padding: 8px 10px;
+        border: 1px solid rgba(96, 165, 250, 0.55);
+        border-radius: 8px;
+        background: rgba(8, 16, 33, 0.94);
+        color: #dbe8ff;
+        font-size: 0.77rem;
+        line-height: 1.35;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        transform: translateY(4px);
+        pointer-events: none;
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        user-select: text;
+        z-index: 20;
+      }
+
+      .auto-config-anchor:hover .auto-config-popover,
+      .auto-config-anchor:focus-within .auto-config-popover,
+      .auto-config-anchor.open .auto-config-popover {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .auto-config-mobile {
+        display: none;
+        margin: -4px 0 12px;
+        user-select: text;
+      }
+
+      .auto-config-editor {
+        margin-top: -4px;
+      }
+
+      .schedule-input {
+        min-width: 96px;
+      }
+
+      .camera-status-badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.78rem;
+        background: rgba(8, 16, 33, 0.55);
+      }
+
+      .badge.ok {
+        border-color: rgba(45, 212, 191, 0.7);
+        color: #99f6e4;
+      }
+
+      .badge.warn {
+        border-color: rgba(245, 158, 11, 0.72);
+        color: #fcd34d;
+      }
+
+      .badge.danger {
+        border-color: rgba(248, 113, 113, 0.82);
+        color: #fecaca;
+      }
+
+      .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
+      }
+
+      .setting-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(19, 31, 63, 0.45);
+        padding: 10px;
+      }
+
+      .setting-label {
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .setting-value {
+        margin-top: 6px;
+        font-weight: 600;
+      }
+
+      .setting-reported {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.75rem;
+      }
+
+      .setting-control {
+        margin-top: 8px;
+        width: 100%;
+      }
+
+      .readable-panel {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(8, 16, 33, 0.68);
+        padding: 12px;
+      }
+
+      .readable-title {
+        font-size: 0.92rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .kv-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+
+      .kv-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.9fr) 1.1fr;
+        gap: 8px;
+        align-items: start;
+        border-bottom: 1px solid rgba(159, 176, 214, 0.12);
+        padding-bottom: 4px;
+      }
+
+      .kv-row:last-child {
+        border-bottom: 0;
+      }
+
+      .kv-key {
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .kv-value {
+        font-size: 0.84rem;
+        word-break: break-word;
+      }
+
+      .raw-toggle {
+        margin-top: 10px;
+      }
+
+      .raw-toggle > summary {
+        cursor: pointer;
+        color: #cfe1ff;
+        font-size: 0.82rem;
+      }
+
+      .raw-toggle > summary:hover {
+        color: #ffffff;
+      }
+
+      .util-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(8, 16, 33, 0.54);
+        padding: 12px;
+      }
+
+      .util-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .util-title {
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+
+      .util-value {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .util-bar-shell {
+        position: relative;
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        overflow: hidden;
+        height: 14px;
+        background: rgba(19, 31, 63, 0.45);
+      }
+
+      .util-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #2dd4bf, #60a5fa);
+        transition: width 0.2s ease;
+      }
+
+      .util-bar-shell.storage:hover .util-bar-fill {
+        opacity: 0.25;
+      }
+
+      .storage-segments {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        pointer-events: none;
+      }
+
+      .util-bar-shell.storage:hover .storage-segments {
+        opacity: 1;
+      }
+
+      .storage-segment {
+        height: 100%;
+      }
+
+      .storage-legend {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .storage-legend-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 0.78rem;
+      }
+
+      .server-control-card {
+        margin-top: 10px;
+      }
+
+      .server-control-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .server-control-actions button {
+        min-width: 168px;
+      }
+
+      .danger-btn {
+        border-color: rgba(248, 113, 113, 0.65);
+        background: rgba(127, 29, 29, 0.45);
+      }
+
+      .danger-btn:hover:not(:disabled) {
+        border-color: rgba(248, 113, 113, 0.95);
+        box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.45) inset;
+      }
+
+      .storage-legend-left {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+      }
+
       .hidden {
         display: none;
       }
@@ -681,6 +1138,11 @@
       @media (max-width: 980px) {
         .row {
           grid-template-columns: 1fr;
+        }
+
+        .kv-row {
+          grid-template-columns: 1fr;
+          gap: 2px;
         }
 
         .live-layout {
@@ -702,6 +1164,31 @@
         .event-modal.open .event-modal-info {
           transform: translateY(0);
         }
+
+        .saved-video-stage {
+          width: min(98vw, 680px);
+          padding: 10px;
+        }
+
+        .saved-video-player {
+          max-height: 62vh;
+        }
+
+        .saved-video-nav {
+          width: 36px;
+          height: 36px;
+          font-size: 1rem;
+        }
+      }
+
+      @media (min-width: 981px) {
+        .reboot-controls {
+          flex-wrap: nowrap;
+        }
+
+        .reboot-controls label {
+          white-space: nowrap;
+        }
       }
 
       @media (hover: none), (pointer: coarse) {
@@ -715,21 +1202,35 @@
           height: 280px;
           touch-action: manipulation;
         }
+
+        .auto-config-anchor {
+          display: none;
+        }
+
+        .auto-config-mobile {
+          display: block;
+        }
       }
     </style>
   </head>
   <body>
+    <div class="server-action-banner" id="server-action-banner" role="status" aria-live="assertive">
+      <span id="server-action-text">Server shutting down</span>
+      <span class="server-action-countdown" id="server-action-countdown">5.0s</span>
+    </div>
     <main class="wrap">
       <header class="top">
         <div>
-          <h1>Doorbell Camera Control Panel</h1>
-          <div class="sub">Webserver-first workflow: live feed, recordings, events, and logs.</div>
+          <h1>LAN CAM Control Panel</h1>
+          <div class="sub">Created by Cameron Jalbert.</div>
         </div>
       </header>
 
       <nav class="nav">
         <button class="tab-btn active" data-tab="live-tab">Live Feed</button>
+        <button class="tab-btn" data-tab="camera-tab">Camera</button>
         <button class="tab-btn" data-tab="recordings-tab">Recordings</button>
+        <button class="tab-btn" data-tab="saved-tab">Saved</button>
         <button class="tab-btn" data-tab="events-tab">Events</button>
         <button class="tab-btn" data-tab="logs-tab">Logs</button>
         <button class="tab-btn" data-tab="system-tab">System</button>
@@ -738,6 +1239,9 @@
       <section class="panel" id="live-tab">
         <div class="controls">
           <button id="live-refresh">Reconnect Stream</button>
+          <button id="live-clip-15" type="button">Clip 15s</button>
+          <button id="live-clip-30" type="button">Clip 30s</button>
+          <span class="muted" id="live-viewer-count">Viewers: --</span>
           <span class="muted" id="live-note">Waiting for camera feed...</span>
         </div>
         <div class="live-layout">
@@ -762,6 +1266,7 @@
               <div class="telemetry-item"><div class="telemetry-label">Event Records</div><div class="telemetry-value" id="telemetry-events">--</div></div>
               <div class="telemetry-item"><div class="telemetry-label">Recordings</div><div class="telemetry-value" id="telemetry-recordings">--</div></div>
               <div class="telemetry-item"><div class="telemetry-label">Snapshots</div><div class="telemetry-value" id="telemetry-snapshots">--</div></div>
+              <div class="telemetry-item"><div class="telemetry-label">Web Viewers</div><div class="telemetry-value" id="telemetry-web-viewers">--</div></div>
               <div class="telemetry-item"><div class="telemetry-label">Jobs (Q/R)</div><div class="telemetry-value" id="telemetry-jobs">--</div></div>
             </div>
           </aside>
@@ -777,15 +1282,112 @@
             <div class="media-player-empty" id="media-empty">Select an image or video below to preview it here.</div>
           </div>
           <p class="muted" id="player-note">Select a media item to preview.</p>
+          <div class="controls">
+            <button id="recording-prev" type="button">Previous</button>
+            <button id="recording-next" type="button">Next</button>
+            <button id="recording-save" type="button">Save Video/Event</button>
+          </div>
         </article>
         <article style="margin-top: 14px;">
           <h3>Media Library</h3>
+          <div class="controls" id="recordings-filter-controls">
+            <label for="recordings-filter-q">Search</label>
+            <input id="recordings-filter-q" type="text" placeholder="name contains..." />
+            <label for="recordings-filter-range">Range</label>
+            <select id="recordings-filter-range">
+              <option value="all">All</option>
+              <option value="24h">Last 24 Hours</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+            </select>
+            <label for="recordings-filter-sort">Sort</label>
+            <select id="recordings-filter-sort">
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="largest">Largest</option>
+              <option value="smallest">Smallest</option>
+              <option value="name">Name</option>
+            </select>
+            <button id="recordings-filter-apply" type="button">Apply</button>
+            <button id="recordings-filter-clear" type="button">Clear</button>
+            <button id="recordings-page-prev" type="button">Prev</button>
+            <button id="recordings-page-next" type="button">Next</button>
+            <span class="muted" id="recordings-page-info">Page -- of -- | Total --</span>
+          </div>
           <div class="media-grid" id="recordings"></div>
+        </article>
+      </section>
+
+      <section class="panel hidden" id="saved-tab">
+        <article>
+          <h3>Saved Items</h3>
+          <div class="controls" id="saved-filter-controls">
+            <label for="saved-filter-q">Search</label>
+            <input id="saved-filter-q" type="text" placeholder="title contains..." />
+            <label for="saved-filter-range">Range</label>
+            <select id="saved-filter-range">
+              <option value="all">All</option>
+              <option value="24h">Last 24 Hours</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+            </select>
+            <label for="saved-filter-sort">Sort</label>
+            <select id="saved-filter-sort">
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="title">Title</option>
+            </select>
+            <button id="saved-filter-apply" type="button">Apply</button>
+            <button id="saved-filter-clear" type="button">Clear</button>
+            <button id="saved-page-prev" type="button">Prev</button>
+            <button id="saved-page-next" type="button">Next</button>
+            <span class="muted" id="saved-page-info">Page -- of -- | Total --</span>
+          </div>
+          <div class="media-grid" id="saved-grid"></div>
         </article>
       </section>
 
       <section class="panel hidden" id="events-tab">
         <h3>Recent Detection Events</h3>
+        <div class="controls" id="events-filter-controls">
+          <label for="events-filter-q">Search</label>
+          <input id="events-filter-q" type="text" placeholder="label or id..." />
+          <label for="events-filter-severity">Severity</label>
+          <select id="events-filter-severity">
+            <option value="all">All</option>
+            <option value="unknown">Unknown</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+          <label for="events-filter-media">Media</label>
+          <select id="events-filter-media">
+            <option value="all">All</option>
+            <option value="snapshot">Has Snapshot</option>
+            <option value="clip">Has Clip</option>
+            <option value="both">Has Both</option>
+            <option value="none">No Media</option>
+          </select>
+          <label for="events-filter-range">Range</label>
+          <select id="events-filter-range">
+            <option value="all">All</option>
+            <option value="24h">Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+          </select>
+          <label for="events-filter-retention">Retention</label>
+          <select id="events-filter-retention">
+            <option value="all">All</option>
+            <option value="next">Next To Delete</option>
+            <option value="last">Last To Delete</option>
+          </select>
+          <button id="events-filter-apply" type="button">Apply</button>
+          <button id="events-filter-clear" type="button">Clear</button>
+          <button id="events-page-prev" type="button">Prev</button>
+          <button id="events-page-next" type="button">Next</button>
+          <span class="muted" id="events-page-info">Page -- of -- | Total --</span>
+        </div>
         <div class="events-grid" id="events"></div>
       </section>
 
@@ -797,8 +1399,18 @@
             <div class="log-source-sub" id="log-source-sub">0 / 0</div>
           </div>
           <button class="log-nav-btn" id="log-next" type="button" aria-label="Next log">&#8594;</button>
-          <label for="log-lines">Lines</label>
-          <input id="log-lines" type="number" min="20" max="2000" value="250" />
+          <label for="log-lines">Lines (0=all)</label>
+          <input id="log-lines" type="number" min="0" max="20000" value="500" />
+          <label for="log-filter-level">Level</label>
+          <select id="log-filter-level">
+            <option value="all">All</option>
+            <option value="error">Error</option>
+            <option value="warn">Warning</option>
+            <option value="info">Info</option>
+          </select>
+          <label for="log-filter-text">Filter</label>
+          <input id="log-filter-text" type="text" placeholder="text contains..." />
+          <button id="log-filter-clear" type="button">Clear Filter</button>
           <button id="log-refresh" type="button">Refresh</button>
         </div>
         <div class="log-viewer">
@@ -807,16 +1419,192 @@
         </div>
       </section>
 
+      <section class="panel hidden" id="camera-tab">
+        <div class="row">
+          <article>
+            <h3>Camera Health</h3>
+            <p class="muted" id="camera-control-note">Loading camera control readiness...</p>
+            <div class="camera-status-badges">
+              <span class="badge" id="camera-sync-badge">Sync: --</span>
+              <span class="badge" id="camera-mode-badge">Mode: --</span>
+            </div>
+            <div class="controls">
+              <button id="camera-status-refresh" type="button">Refresh Camera Status</button>
+              <button id="camera-health-check" type="button">Run Health Check</button>
+              <span class="muted" id="camera-active-profile">Active Profile: --</span>
+            </div>
+            <div class="controls">
+              <label for="camera-profile-name">Profile</label>
+              <select id="camera-profile-name">
+                <option value="base">base</option>
+                <option value="day">day</option>
+                <option value="night">night</option>
+              </select>
+              <button id="camera-profile-apply" type="button" title="Quick manual testing only. Not canonical.">Apply Profile</button>
+            </div>
+            <p class="muted profile-quick-help" id="camera-profile-quick-help">
+              Quick manual testing only. This does not update canonical mode policy and is ignored when you set active mode. Reboot follow-up reasserts mode policy unless auto mode is paused.
+            </p>
+            <div class="controls reboot-controls">
+              <label for="camera-reboot-delay-ms">Reboot Delay (ms)</label>
+              <input
+                id="camera-reboot-delay-ms"
+                class="reboot-delay-input"
+                type="number"
+                min="100"
+                max="10000"
+                step="50"
+                value="250"
+              />
+              <button id="camera-reboot-btn" type="button">Reboot Camera</button>
+            </div>
+            <div class="controls">
+              <button id="camera-auto-enable" type="button">Enable Auto Day/Night</button>
+              <button id="camera-auto-disable" type="button">Disable Auto Day/Night</button>
+              <button id="camera-auto-config" type="button">Use Config Default</button>
+              <span class="automation-state-wrap muted">
+                <span id="camera-auto-state">Automation: --</span>
+                <span class="auto-config-anchor" id="camera-auto-config-anchor">
+                  <button id="camera-auto-config-toggle" class="auto-config-trigger" type="button" aria-expanded="false">
+                    Config Schedule
+                  </button>
+                  <span class="auto-config-popover" id="camera-auto-config-popover">Config: --</span>
+                </span>
+              </span>
+            </div>
+            <p class="muted auto-config-mobile" id="camera-auto-config-mobile">Config: --</p>
+            <div class="controls auto-config-editor">
+              <label for="camera-auto-day-hour">Day Start</label>
+              <select id="camera-auto-day-hour" class="schedule-input"></select>
+              <label for="camera-auto-night-hour">Night Start</label>
+              <select id="camera-auto-night-hour" class="schedule-input"></select>
+              <button id="camera-auto-schedule-save" type="button">Save Schedule</button>
+            </div>
+            <p class="muted" id="camera-mode-help">
+              Auto mode + automation ON: scheduler owns day/night profile switching. Auto mode + automation OFF: current profile is held.
+            </p>
+          </article>
+          <article>
+            <h3>Mode Engine</h3>
+            <div class="controls">
+              <label for="camera-mode-name">Mode</label>
+              <select id="camera-mode-name">
+                <option value="base">base</option>
+                <option value="manual_saved">manual_saved</option>
+                <option value="manual_temporary">manual_temporary</option>
+                <option value="adaptive_capture">adaptive_capture</option>
+                <option value="auto_day_night_profile">auto_day_night_profile</option>
+              </select>
+              <button id="camera-mode-apply" type="button">Set Active Mode</button>
+            </div>
+            <div class="controls">
+              <button id="camera-sync-adopt" type="button">Adopt Current Camera State</button>
+              <button id="camera-sync-reapply" type="button">Reapply Canonical Policy</button>
+            </div>
+            <div class="readable-panel" id="camera-mode-state-readable">No mode-state loaded yet.</div>
+            <details class="raw-toggle">
+              <summary>Raw JSON</summary>
+              <pre id="camera-mode-state-output">No mode-state loaded yet.</pre>
+            </details>
+          </article>
+        </div>
+        <article style="margin-top: 14px;">
+          <h3>Curated Settings</h3>
+          <p class="muted">Each control is mapped to firmware-safe camera settings with mode-aware persistence.</p>
+          <div class="settings-grid" id="camera-settings-grid"></div>
+          <div class="controls" style="margin-top: 12px;">
+            <button id="camera-settings-refresh" type="button">Load Current Settings</button>
+            <button id="camera-settings-apply-temp" type="button">Apply Temporary</button>
+            <button id="camera-settings-save-manual" type="button">Save Manual</button>
+          </div>
+          <div class="readable-panel" id="camera-control-readable">No camera control calls yet.</div>
+          <details class="raw-toggle">
+            <summary>Raw JSON</summary>
+            <pre id="camera-control-output">No camera control calls yet.</pre>
+          </details>
+        </article>
+      </section>
+
       <section class="panel hidden" id="system-tab">
         <div class="row">
           <article>
             <h3>Safe Config</h3>
-            <pre id="config">Loading...</pre>
+            <div class="readable-panel" id="config-readable">Loading translated config...</div>
+            <details class="raw-toggle" id="config-raw-toggle">
+              <summary>Code View</summary>
+              <pre id="config">Loading...</pre>
+            </details>
           </article>
           <article>
-            <h3>Latest Snapshot</h3>
-            <img id="snapshot" alt="Latest event snapshot" style="width: 100%; border: 1px solid var(--line); border-radius: 10px;" />
-            <p class="muted" id="snapshot-note">Waiting for first detection event...</p>
+            <h3>System Utilization</h3>
+            <div class="util-card">
+              <div class="util-row">
+                <div class="util-title">CPU</div>
+                <div class="util-value" id="system-cpu-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell">
+                <div class="util-bar-fill" id="system-cpu-bar"></div>
+              </div>
+            </div>
+            <div class="util-card" style="margin-top: 10px;">
+              <div class="util-row">
+                <div class="util-title">RAM</div>
+                <div class="util-value" id="system-ram-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell">
+                <div class="util-bar-fill" id="system-ram-bar"></div>
+              </div>
+            </div>
+            <div class="util-card" style="margin-top: 10px;">
+              <div class="util-row">
+                <div class="util-title">Storage</div>
+                <div class="util-value" id="system-storage-value">-- / --</div>
+              </div>
+              <div class="util-bar-shell storage" id="system-storage-shell">
+                <div class="util-bar-fill" id="system-storage-bar"></div>
+                <div class="storage-segments" id="system-storage-segments"></div>
+              </div>
+              <div class="storage-legend" id="system-storage-legend"></div>
+            </div>
+            <div class="util-card server-control-card">
+              <div class="util-row">
+                <div class="util-title">Server Control</div>
+                <div class="util-value">Planned 5s countdown</div>
+              </div>
+              <div class="server-control-actions">
+                <button id="system-shutdown-btn" class="danger-btn" type="button">Shutdown Backend</button>
+                <button id="system-reboot-btn" class="danger-btn" type="button">Reboot Backend</button>
+              </div>
+              <div class="muted" id="system-server-control-note" style="margin-top: 8px;">No pending server action.</div>
+              <hr style="border-color: rgba(96,165,250,0.18); margin: 12px 0;" />
+              <div class="util-row">
+                <div class="util-title">Scheduled Reboots</div>
+                <div class="util-value" id="system-restart-runner">Runner --</div>
+              </div>
+              <div class="controls">
+                <label for="restart-daily-enabled">Daily</label>
+                <input id="restart-daily-enabled" type="checkbox" />
+                <input id="restart-daily-time" type="time" value="04:00" />
+              </div>
+              <div class="controls">
+                <label for="restart-weekly-enabled">Weekly</label>
+                <input id="restart-weekly-enabled" type="checkbox" />
+                <select id="restart-weekly-day">
+                  <option value="0">Mon</option>
+                  <option value="1">Tue</option>
+                  <option value="2">Wed</option>
+                  <option value="3">Thu</option>
+                  <option value="4">Fri</option>
+                  <option value="5">Sat</option>
+                  <option value="6">Sun</option>
+                </select>
+                <input id="restart-weekly-time" type="time" value="04:00" />
+              </div>
+              <div class="controls">
+                <button id="restart-schedule-save" type="button">Save Restart Schedule</button>
+                <button id="restart-schedule-refresh" type="button">Refresh</button>
+              </div>
+            </div>
           </article>
         </div>
       </section>
@@ -832,9 +1620,42 @@
           <div class="event-modal-meta" id="event-modal-meta"></div>
           <div class="event-modal-actions">
             <button id="event-modal-watch" type="button">Watch Event Video</button>
+            <button id="event-modal-save" type="button">Save Event</button>
+            <button id="event-modal-delete" type="button">Delete Event</button>
             <button id="event-modal-close" type="button">Close</button>
           </div>
         </aside>
+      </div>
+    </div>
+
+    <div class="event-modal hidden" id="saved-modal" aria-hidden="true">
+      <div class="event-modal-stage" role="dialog" aria-modal="true" aria-labelledby="saved-modal-title">
+        <article class="event-modal-media">
+          <img id="saved-modal-image" alt="Selected saved snapshot" />
+        </article>
+        <aside class="event-modal-info">
+          <h3 id="saved-modal-title">Saved Capture Details</h3>
+          <div class="event-modal-meta" id="saved-modal-meta"></div>
+          <div class="event-modal-actions">
+            <button id="saved-modal-play" type="button">Play Saved Video</button>
+            <button id="saved-modal-delete" type="button">Delete Saved Item</button>
+            <button id="saved-modal-close" type="button">Close</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="saved-video-modal hidden" id="saved-video-modal" aria-hidden="true">
+      <div class="saved-video-stage" role="dialog" aria-modal="true" aria-labelledby="saved-video-title">
+        <div class="saved-video-header">
+          <div class="saved-video-title" id="saved-video-title">Saved Video</div>
+          <button id="saved-video-close" type="button">Close</button>
+        </div>
+        <div class="saved-video-body">
+          <button class="saved-video-nav left" id="saved-video-prev" type="button" aria-label="Previous saved video">&#8592;</button>
+          <video id="saved-video-player" class="saved-video-player" controls></video>
+          <button class="saved-video-nav right" id="saved-video-next" type="button" aria-label="Next saved video">&#8594;</button>
+        </div>
       </div>
     </div>
 
@@ -849,21 +1670,51 @@
       const MOBILE_LIVE_JPEG_QUALITY = 85;
       const liveMode = isMobileClient ? "mobile-snapshot" : "desktop-mjpeg";
       const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
-      const LOG_ERROR_PATTERN = /\b(error|exception|traceback|fatal|failed|critical)\b/i;
+      const SYSTEM_SERVER_ACTION_DELAY_SECONDS = 5;
+      const PAGE_SIZE = 24;
       let mobileLiveLoopRunning = false;
       let mobileLiveObjectUrl = null;
       const touchClient = isTouchClient();
-      const logsTabBtn = document.querySelector('.tab-btn[data-tab="logs-tab"]');
       let latestEvents = [];
       let latestRecordings = [];
+      let eventsPagination = { limit: PAGE_SIZE, offset: 0, total: 0, page: 1, pages: 1, has_prev: false, has_next: false };
+      let recordingsPagination = { limit: PAGE_SIZE, offset: 0, total: 0, page: 1, pages: 1, has_prev: false, has_next: false };
+      let eventsFiltersState = { q: "", severity: "all", media: "all", range: "all", retention_queue: "all" };
+      let recordingsFiltersState = { q: "", range: "all", sort: "newest" };
+      let savedFiltersState = { q: "", range: "all", sort: "newest" };
+      let savedPagination = { limit: PAGE_SIZE, offset: 0, total: 0, page: 1, pages: 1, has_prev: false, has_next: false };
       let mediaItems = [];
+      let savedItems = [];
       let selectedMediaKey = "";
+      let selectedSavedKey = "";
+      let selectedEventForModal = null;
+      let selectedSavedForModal = null;
       let logFiles = [];
       let currentLogIndex = 0;
-      let logErrorsByFile = new Map();
       let activeLogPane = "a";
       let logPaneAnimating = false;
       let logRequestToken = 0;
+      let currentRawLogContent = "";
+      let viewerHeartbeatId = "";
+      let currentCameraModeState = null;
+      let cameraSettingsValues = {};
+      let cameraSettingsInitialized = false;
+      let cameraSettingsSourceMode = "";
+      let currentCameraSettingsSpec = [];
+      let cameraReportedSettings = {};
+      let lastCameraAutomationStatus = null;
+      let cameraModeLastServerValue = "base";
+      let cameraModeSelectionDirty = false;
+      let cameraAutoScheduleDirty = false;
+      let cameraAutoScheduleServer = { config_enabled: false, day_start_hour: 7, night_start_hour: 19 };
+      let restartScheduleDirty = false;
+      let restartScheduleServer = {
+        daily: { enabled: false, time_local: "04:00" },
+        weekly: { enabled: false, weekday: 0, time_local: "04:00" },
+      };
+      let serverActionCountdownDeadlineMs = 0;
+      let serverActionCountdownTickerId = null;
+      let serverActionStateSignature = "";
 
       function isTouchClient() {
         return (
@@ -886,6 +1737,24 @@
         });
         if (tabId === "logs-tab") {
           refreshLogsPanel({ preserveCurrent: true, animate: false }).catch(console.error);
+        }
+        if (tabId === "events-tab") {
+          loadEvents().catch(console.error);
+        }
+        if (tabId === "recordings-tab") {
+          loadRecordings().catch(console.error);
+        }
+        if (tabId === "saved-tab") {
+          loadSavedItems().catch(console.error);
+        }
+        if (tabId === "camera-tab") {
+          refreshCameraControlStatus().catch(console.error);
+          refreshCameraAutomationStatus({ quiet: true }).catch(console.error);
+          refreshCameraModeState({ quiet: true }).catch(console.error);
+        }
+        if (tabId === "system-tab") {
+          loadSystemUtilization().catch(console.error);
+          loadRestartSchedule({ keepEdits: true }).catch(console.error);
         }
       }
 
@@ -931,6 +1800,7 @@
         const ingest = health.ingest || {};
         const storage = health.storage || {};
         const jobs = health.jobs || {};
+        const viewers = health.viewers || {};
         setTelemetryValue(
           "telemetry-backend",
           health.status === "ok" ? "Healthy" : "Degraded",
@@ -968,27 +1838,1409 @@
         setTelemetryValue("telemetry-events", String(storage.event_records ?? 0));
         setTelemetryValue("telemetry-recordings", String(health.recording_count ?? 0));
         setTelemetryValue("telemetry-snapshots", String(health.snapshot_count ?? 0));
+        setTelemetryValue("telemetry-web-viewers", String(viewers.active_viewers ?? 0));
         setTelemetryValue("telemetry-jobs", `${jobs.queued ?? 0}/${jobs.running ?? 0}`);
+        document.getElementById("live-viewer-count").textContent = `Viewers: ${viewers.active_viewers ?? 0}`;
       }
 
       async function loadHealth() {
         const result = await fetch("/api/health");
         const json = await result.json();
         updateLiveTelemetry(json);
+        applyServerControlState(json?.server_control);
+      }
+
+      async function sendViewerHeartbeat() {
+        try {
+          const response = await fetch("/api/viewers/heartbeat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewer_id: viewerHeartbeatId || undefined }),
+          });
+          const json = await response.json();
+          if (json?.viewer_id) {
+            viewerHeartbeatId = String(json.viewer_id);
+          }
+          const active = Number(json?.active_viewers ?? NaN);
+          if (Number.isFinite(active)) {
+            document.getElementById("live-viewer-count").textContent = `Viewers: ${active}`;
+            setTelemetryValue("telemetry-web-viewers", String(active));
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      async function createManualClip(seconds) {
+        const secs = Number(seconds) === 30 ? 30 : 15;
+        const defaultTitle = `Clipped event ${new Date().toLocaleString()}`;
+        const entered = window.prompt("Clip title", defaultTitle);
+        if (entered === null) {
+          return;
+        }
+        const title = String(entered || "").trim() || defaultTitle;
+        const response = await fetch("/api/capture/manual-clip", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seconds: secs, title }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json?.detail || `manual clip failed (${response.status})`);
+        }
+        document.getElementById("live-note").textContent = `Manual clip saved (${secs}s).`;
+        await Promise.all([
+          loadRecordings({ resetOffset: true }).catch(console.error),
+          loadEvents({ resetOffset: true }).catch(console.error),
+          loadSavedItems({ resetOffset: true }).catch(console.error),
+        ]);
+      }
+
+      async function loadServerControlState(options = {}) {
+        const quiet = Boolean(options.quiet ?? true);
+        try {
+          const result = await fetch("/api/server/control");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `server control request failed (${result.status})`);
+          }
+          applyServerControlState(json);
+        } catch (error) {
+          if (!quiet) {
+            console.error(error);
+          }
+        }
       }
 
       async function loadConfig() {
         const result = await fetch("/api/config-safe");
         const json = await result.json();
         document.getElementById("config").textContent = JSON.stringify(json, null, 2);
+        renderSafeConfigReadable(json);
+        updateCameraControlReadinessFromSafeConfig(json);
+      }
+
+      function formatReadableValue(value) {
+        if (value === null || typeof value === "undefined") {
+          return "--";
+        }
+        if (typeof value === "boolean") {
+          return value ? "Yes" : "No";
+        }
+        if (typeof value === "number") {
+          return Number.isFinite(value) ? String(value) : "--";
+        }
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed || "--";
+        }
+        if (Array.isArray(value)) {
+          if (!value.length) {
+            return "None";
+          }
+          return value.map((entry) => String(entry)).join(", ");
+        }
+        if (typeof value === "object") {
+          return `${Object.keys(value).length} fields`;
+        }
+        return String(value);
+      }
+
+      function humanizeKeyPath(path) {
+        const raw = String(path || "").replace(/\./g, " / ").replace(/_/g, " ");
+        return raw
+          .split(" ")
+          .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ""))
+          .join(" ");
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function flattenReadableRows(value, prefix = "", depth = 0, maxDepth = 2, rows = []) {
+        if (value === null || typeof value === "undefined") {
+          if (prefix) {
+            rows.push({ key: prefix, value: "--" });
+          }
+          return rows;
+        }
+        if (typeof value !== "object") {
+          if (prefix) {
+            rows.push({ key: prefix, value: formatReadableValue(value) });
+          }
+          return rows;
+        }
+        if (Array.isArray(value)) {
+          if (!prefix) {
+            rows.push({ key: "Items", value: formatReadableValue(value) });
+            return rows;
+          }
+          rows.push({ key: prefix, value: formatReadableValue(value) });
+          return rows;
+        }
+        const keys = Object.keys(value);
+        if (!keys.length) {
+          if (prefix) {
+            rows.push({ key: prefix, value: "None" });
+          }
+          return rows;
+        }
+        for (const key of keys) {
+          const childPath = prefix ? `${prefix}.${key}` : key;
+          const childValue = value[key];
+          if (depth >= maxDepth || childValue === null || typeof childValue !== "object" || Array.isArray(childValue)) {
+            rows.push({ key: childPath, value: formatReadableValue(childValue) });
+            continue;
+          }
+          flattenReadableRows(childValue, childPath, depth + 1, maxDepth, rows);
+        }
+        return rows;
+      }
+
+      function renderReadablePanel(targetId, title, payload, options = {}) {
+        const node = document.getElementById(targetId);
+        if (!node) {
+          return;
+        }
+        const rows = flattenReadableRows(payload, "", 0, Number(options.maxDepth ?? 2), []);
+        if (!rows.length) {
+          node.innerHTML = `<div class="readable-title">${title}</div><div class="muted">No details available.</div>`;
+          return;
+        }
+        const body = rows
+          .map(
+            (row) =>
+              `<div class="kv-row"><div class="kv-key">${escapeHtml(humanizeKeyPath(row.key))}</div><div class="kv-value">${escapeHtml(row.value)}</div></div>`
+          )
+          .join("");
+        node.innerHTML = `<div class="readable-title">${escapeHtml(title)}</div><div class="kv-grid">${body}</div>`;
+      }
+
+      function renderSafeConfigReadable(configSafe) {
+        const readablePayload = {
+          camera: configSafe?.camera,
+          camera_control: configSafe?.camera_control,
+          detection: configSafe?.detection,
+          recording: configSafe?.recording,
+          ingest: configSafe?.ingest,
+          storage: configSafe?.storage,
+          alerts: configSafe?.alerts,
+          api: configSafe?.api,
+          auth: configSafe?.auth,
+        };
+        renderReadablePanel("config-readable", "Safe Config (Translated)", readablePayload, { maxDepth: 2 });
+      }
+
+      function updateCameraControlReadinessFromSafeConfig(configSafe) {
+        const panel = configSafe?.camera_control || {};
+        const enabled = Boolean(panel.enabled);
+        const baseUrl = String(panel.base_url || "").trim() || "--";
+        const tokenConfigured = Boolean(panel.token_configured);
+        const note = document.getElementById("camera-control-note");
+        note.textContent = enabled
+          ? `Camera control enabled at ${baseUrl} | token ${tokenConfigured ? "configured" : "missing"}`
+          : "Camera control disabled in runtime config.";
+        const profileAutomation = panel?.profile_automation;
+        if (profileAutomation && typeof profileAutomation === "object") {
+          applyCameraAutomationSchedule(profileAutomation, { keepEdits: true });
+        }
+      }
+
+      function setCameraControlOutput(title, payload) {
+        const node = document.getElementById("camera-control-output");
+        node.textContent = `${title}\n${JSON.stringify(payload, null, 2)}`;
+        renderReadablePanel("camera-control-readable", title, payload, { maxDepth: 2 });
+      }
+
+      function scrollCameraOutputIntoView() {
+        const node = document.getElementById("camera-control-readable");
+        if (!node) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          node.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+
+      function setCameraActiveProfileLabel(value) {
+        const node = document.getElementById("camera-active-profile");
+        const text = String(value || "").trim();
+        node.textContent = `Active Profile: ${text || "--"}`;
+      }
+
+      function setCameraAutomationStateLabel(value) {
+        const node = document.getElementById("camera-auto-state");
+        const text = String(value || "").trim();
+        node.textContent = `Automation: ${text || "--"}`;
+      }
+
+      function clampHour(value, fallback = 0) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          return fallback;
+        }
+        return Math.max(0, Math.min(23, Math.floor(parsed)));
+      }
+
+      function formatHourLabel(hourValue) {
+        const hour = clampHour(hourValue, 0);
+        return `${String(hour).padStart(2, "0")}:00`;
+      }
+
+      function normalizeAutomationSchedulePayload(payload) {
+        const source = payload && typeof payload === "object" ? payload : {};
+        const nestedAutomation =
+          source.automation && typeof source.automation === "object" ? source.automation : {};
+        const dayStartRaw =
+          nestedAutomation.day_start_hour ?? source.day_start_hour ?? cameraAutoScheduleServer.day_start_hour;
+        const nightStartRaw =
+          nestedAutomation.night_start_hour ?? source.night_start_hour ?? cameraAutoScheduleServer.night_start_hour;
+        return {
+          config_enabled: Boolean(source.config_enabled ?? source.enabled ?? cameraAutoScheduleServer.config_enabled),
+          day_start_hour: clampHour(dayStartRaw, cameraAutoScheduleServer.day_start_hour),
+          night_start_hour: clampHour(nightStartRaw, cameraAutoScheduleServer.night_start_hour),
+        };
+      }
+
+      function automationConfigSummaryText(schedule) {
+        const configEnabled = Boolean(schedule?.config_enabled);
+        const dayStart = formatHourLabel(schedule?.day_start_hour ?? 7);
+        const nightStart = formatHourLabel(schedule?.night_start_hour ?? 19);
+        return `Config ${configEnabled ? "enabled" : "disabled"} | day ${dayStart}, night ${nightStart}`;
+      }
+
+      function setCameraAutoConfigPopoverOpen(open) {
+        const anchor = document.getElementById("camera-auto-config-anchor");
+        const button = document.getElementById("camera-auto-config-toggle");
+        if (!anchor || !button) {
+          return;
+        }
+        const isOpen = Boolean(open);
+        anchor.classList.toggle("open", isOpen);
+        button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      }
+
+      function setCameraAutomationConfigSummary(text) {
+        const summary = String(text || "").trim() || "Config: --";
+        const popover = document.getElementById("camera-auto-config-popover");
+        const mobile = document.getElementById("camera-auto-config-mobile");
+        if (popover) {
+          popover.textContent = summary;
+        }
+        if (mobile) {
+          mobile.textContent = summary;
+        }
+      }
+
+      function applyCameraAutomationSchedule(payload, options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const schedule = normalizeAutomationSchedulePayload(payload);
+        cameraAutoScheduleServer = schedule;
+        setCameraAutomationConfigSummary(automationConfigSummaryText(schedule));
+
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const shouldHydrateInputs = !keepEdits || !cameraAutoScheduleDirty;
+        if (!shouldHydrateInputs) {
+          return;
+        }
+        daySelect.value = String(schedule.day_start_hour);
+        nightSelect.value = String(schedule.night_start_hour);
+        cameraAutoScheduleDirty = false;
+      }
+
+      function buildAutomationScheduleHourOptions() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        if (daySelect.options.length && nightSelect.options.length) {
+          return;
+        }
+        const options = [];
+        for (let hour = 0; hour < 24; hour += 1) {
+          const option = document.createElement("option");
+          option.value = String(hour);
+          option.textContent = formatHourLabel(hour);
+          options.push(option);
+        }
+        daySelect.innerHTML = "";
+        nightSelect.innerHTML = "";
+        options.forEach((option) => {
+          daySelect.appendChild(option.cloneNode(true));
+          nightSelect.appendChild(option.cloneNode(true));
+        });
+      }
+
+      function markCameraAutoScheduleDirty() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const dayValue = clampHour(daySelect.value, cameraAutoScheduleServer.day_start_hour);
+        const nightValue = clampHour(nightSelect.value, cameraAutoScheduleServer.night_start_hour);
+        cameraAutoScheduleDirty =
+          dayValue !== cameraAutoScheduleServer.day_start_hour ||
+          nightValue !== cameraAutoScheduleServer.night_start_hour;
+      }
+
+      function renderCameraModeHelp() {
+        const node = document.getElementById("camera-mode-help");
+        if (!node) {
+          return;
+        }
+        const activeMode = String(currentCameraModeState?.active_mode || "");
+        const effectiveEnabled = Boolean(lastCameraAutomationStatus?.effective_enabled);
+        if (activeMode === "auto_day_night_profile") {
+          node.textContent = effectiveEnabled
+            ? "Auto mode + automation ON: scheduler owns day/night profile switching."
+            : "Auto mode selected, automation OFF: current profile is held until automation is enabled or a profile is applied manually.";
+          return;
+        }
+        node.textContent =
+          "Manual/base/adaptive modes own camera settings directly. Auto Day/Night buttons only control the scheduler.";
+      }
+
+      async function reconcileCameraSyncNow(options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        try {
+          const response = await fetch("/api/camera-control/sync/reconcile-now", { method: "POST" });
+          const json = await parseJsonResponse(response);
+          if (!response.ok) {
+            return null;
+          }
+          applyModeStatePayload(json, { keepEdits });
+          return json;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      async function reconcileAndRefreshModeState(options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        await reconcileCameraSyncNow({ keepEdits });
+        await refreshCameraModeState({ quiet: true, keepEdits }).catch(console.error);
+      }
+
+      function extractCameraProfile(statusPayload) {
+        const profile = statusPayload?.status?.payload?.active_profile;
+        return String(profile || "").trim();
+      }
+
+      async function refreshCameraControlStatus(options = {}) {
+        const quiet = Boolean(options.quiet);
+        const reconcileSync = Boolean(options.reconcileSync);
+        const scrollToOutput = Boolean(options.scrollToOutput);
+        try {
+          const result = await fetch("/api/camera-control/status");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `camera status request failed (${result.status})`);
+          }
+          const profile = extractCameraProfile(json);
+          if (profile) {
+            setCameraActiveProfileLabel(profile);
+          }
+          if (!quiet) {
+            setCameraControlOutput("Camera Status", json);
+          }
+          if (reconcileSync) {
+            await reconcileAndRefreshModeState({ keepEdits: true });
+          }
+          if (scrollToOutput) {
+            scrollCameraOutputIntoView();
+          }
+        } catch (error) {
+          if (!quiet) {
+            setCameraControlOutput("Camera Status Error", { error: String(error) });
+            if (scrollToOutput) {
+              scrollCameraOutputIntoView();
+            }
+          }
+        }
+      }
+
+      async function refreshCameraAutomationStatus(options = {}) {
+        const quiet = Boolean(options.quiet);
+        try {
+          const result = await fetch("/api/camera-control/automation");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `camera automation request failed (${result.status})`);
+          }
+          lastCameraAutomationStatus = json;
+          const effectiveEnabled = Boolean(json.effective_enabled);
+          const override = json.runtime_enabled_override;
+          const desired = String(json.last_desired_profile || "--");
+          const active = String(json.last_camera_profile || "--");
+          const modeText =
+            override === null || typeof override === "undefined"
+              ? `config mode (${effectiveEnabled ? "on" : "off"})`
+              : `runtime override ${effectiveEnabled ? "on" : "off"}`;
+          setCameraAutomationStateLabel(`${modeText} | desired ${desired} | active ${active}`);
+          applyCameraAutomationSchedule(json, { keepEdits: true });
+          renderCameraModeHelp();
+          if (!quiet) {
+            setCameraControlOutput("Camera Automation Status", json);
+          }
+        } catch (error) {
+          lastCameraAutomationStatus = null;
+          setCameraAutomationStateLabel("unavailable");
+          renderCameraModeHelp();
+          if (!quiet) {
+            setCameraControlOutput("Camera Automation Error", { error: String(error) });
+          }
+        }
+      }
+
+      async function setCameraAutomationEnabled(enabled) {
+        const result = await fetch(`/api/camera-control/automation?enabled=${enabled ? "true" : "false"}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput(`Camera Automation ${enabled ? "Enabled" : "Disabled"}`, json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+      }
+
+      async function setCameraAutomationUseConfig() {
+        const result = await fetch("/api/camera-control/automation/use-config", { method: "POST" });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput("Camera Automation Using Config Default", json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+      }
+
+      async function saveCameraAutomationSchedule() {
+        const daySelect = document.getElementById("camera-auto-day-hour");
+        const nightSelect = document.getElementById("camera-auto-night-hour");
+        if (!daySelect || !nightSelect) {
+          return;
+        }
+        const dayStartHour = clampHour(daySelect.value, cameraAutoScheduleServer.day_start_hour);
+        const nightStartHour = clampHour(nightSelect.value, cameraAutoScheduleServer.night_start_hour);
+        const response = await fetch(
+          `/api/camera-control/automation/schedule?day_start_hour=${dayStartHour}&night_start_hour=${nightStartHour}`,
+          { method: "POST" }
+        );
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Camera Automation Schedule Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        cameraAutoScheduleDirty = false;
+        if (json?.status) {
+          applyCameraAutomationSchedule(json.status, { keepEdits: false });
+        }
+        setCameraControlOutput("Camera Automation Schedule Updated", json);
+        await refreshCameraAutomationStatus({ quiet: true });
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function runCameraHealthCheck() {
+        try {
+          const result = await fetch("/api/camera-control/health");
+          const json = await parseJsonResponse(result);
+          setCameraControlOutput("Camera Health", json);
+          await reconcileAndRefreshModeState({ keepEdits: true });
+          scrollCameraOutputIntoView();
+        } catch (error) {
+          setCameraControlOutput("Camera Health Error", { error: String(error) });
+          scrollCameraOutputIntoView();
+        }
+      }
+
+      async function applyCameraProfile() {
+        const name = String(document.getElementById("camera-profile-name").value || "base").trim();
+        const result = await fetch(`/api/camera-control/profile?name=${encodeURIComponent(name)}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput(`Apply Profile (Quick Test: ${name})`, {
+          ...json,
+          quick_test_only: true,
+          note: "Temporary manual test action. Canonical mode policy is not changed.",
+        });
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function enforceModePolicyAfterReboot() {
+        await refreshCameraAutomationStatus({ quiet: true });
+        await refreshCameraModeState({ quiet: true, keepEdits: true });
+        const activeMode = String(currentCameraModeState?.active_mode || "base").trim();
+        const autoPaused =
+          activeMode === "auto_day_night_profile" && !Boolean(lastCameraAutomationStatus?.effective_enabled);
+        if (autoPaused) {
+          return { ok: true, skipped: true, reason: "auto_mode_paused" };
+        }
+        const response = await fetch("/api/camera-control/sync/reapply-canonical", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (response.ok) {
+          applyModeStatePayload(json, { keepEdits: true });
+          return { ok: true, skipped: false };
+        }
+        return { ok: false, skipped: false, detail: json };
+      }
+
+      async function rebootCamera() {
+        const delayNode = document.getElementById("camera-reboot-delay-ms");
+        const parsed = Number(delayNode.value || "250");
+        const delayMs = Number.isFinite(parsed) ? Math.max(100, Math.min(10000, Math.floor(parsed))) : 250;
+        delayNode.value = String(delayMs);
+        const ok = window.confirm(`Reboot camera now with ${delayMs} ms delay?`);
+        if (!ok) {
+          return;
+        }
+        const result = await fetch(`/api/camera-control/reboot?delay_ms=${delayMs}`, { method: "POST" });
+        const json = await parseJsonResponse(result);
+        setCameraControlOutput("Camera Reboot", json);
+        scrollCameraOutputIntoView();
+        setTimeout(() => {
+          (async () => {
+            await refreshCameraControlStatus({ quiet: false, reconcileSync: true, scrollToOutput: true });
+            const policy = await enforceModePolicyAfterReboot();
+            if (!policy.ok) {
+              setCameraControlOutput("Post-Reboot Mode Policy Error", policy.detail || { error: "unknown_error" });
+              scrollCameraOutputIntoView();
+            }
+          })().catch(console.error);
+        }, 1500);
+      }
+
+      function wireCameraControlPanel() {
+        buildAutomationScheduleHourOptions();
+        applyCameraAutomationSchedule(cameraAutoScheduleServer, { keepEdits: false });
+        const modeSelect = cameraModeSelectNode();
+        if (modeSelect) {
+          modeSelect.addEventListener("change", () => {
+            markCameraModeSelectionDirty();
+          });
+        }
+        const dayHourSelect = document.getElementById("camera-auto-day-hour");
+        const nightHourSelect = document.getElementById("camera-auto-night-hour");
+        if (dayHourSelect) {
+          dayHourSelect.addEventListener("change", () => {
+            markCameraAutoScheduleDirty();
+          });
+        }
+        if (nightHourSelect) {
+          nightHourSelect.addEventListener("change", () => {
+            markCameraAutoScheduleDirty();
+          });
+        }
+        const configToggle = document.getElementById("camera-auto-config-toggle");
+        if (configToggle) {
+          configToggle.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const anchor = document.getElementById("camera-auto-config-anchor");
+            const isOpen = Boolean(anchor?.classList.contains("open"));
+            setCameraAutoConfigPopoverOpen(!isOpen);
+          });
+        }
+        document.addEventListener("click", (event) => {
+          const anchor = document.getElementById("camera-auto-config-anchor");
+          if (!anchor) {
+            return;
+          }
+          if (!anchor.contains(event.target)) {
+            setCameraAutoConfigPopoverOpen(false);
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            setCameraAutoConfigPopoverOpen(false);
+          }
+        });
+        document.getElementById("camera-status-refresh").addEventListener("click", () => {
+          refreshCameraControlStatus({ quiet: false, reconcileSync: true, scrollToOutput: true }).catch(console.error);
+        });
+        document.getElementById("camera-health-check").addEventListener("click", () => {
+          runCameraHealthCheck().catch(console.error);
+        });
+        document.getElementById("camera-profile-apply").addEventListener("click", () => {
+          applyCameraProfile().catch(console.error);
+        });
+        document.getElementById("camera-reboot-btn").addEventListener("click", () => {
+          rebootCamera().catch(console.error);
+        });
+        document.getElementById("camera-auto-enable").addEventListener("click", () => {
+          setCameraAutomationEnabled(true).catch(console.error);
+        });
+        document.getElementById("camera-auto-disable").addEventListener("click", () => {
+          setCameraAutomationEnabled(false).catch(console.error);
+        });
+        document.getElementById("camera-auto-config").addEventListener("click", () => {
+          setCameraAutomationUseConfig().catch(console.error);
+        });
+        document.getElementById("camera-auto-schedule-save").addEventListener("click", () => {
+          saveCameraAutomationSchedule().catch(console.error);
+        });
+        document.getElementById("camera-mode-apply").addEventListener("click", () => {
+          setCameraMode().catch(console.error);
+        });
+        document.getElementById("camera-sync-adopt").addEventListener("click", () => {
+          adoptCurrentCameraState().catch(console.error);
+        });
+        document.getElementById("camera-sync-reapply").addEventListener("click", () => {
+          reapplyCanonicalCameraPolicy().catch(console.error);
+        });
+        document.getElementById("camera-settings-refresh").addEventListener("click", () => {
+          (async () => {
+            await reconcileAndRefreshModeState({ keepEdits: false });
+            await refreshCameraModeState({ quiet: false, keepEdits: false });
+            scrollCameraOutputIntoView();
+          })().catch(console.error);
+        });
+        document.getElementById("camera-settings-apply-temp").addEventListener("click", () => {
+          applyTemporaryCameraSettings().catch(console.error);
+        });
+        document.getElementById("camera-settings-save-manual").addEventListener("click", () => {
+          saveManualCameraSettings().catch(console.error);
+        });
+      }
+
+      function clampPercent(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          return 0;
+        }
+        return Math.max(0, Math.min(100, n));
+      }
+
+      function formatBytes(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) {
+          return "--";
+        }
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let size = n;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        const fixed = size >= 100 ? size.toFixed(0) : size.toFixed(1);
+        return `${fixed} ${units[unitIndex]}`;
+      }
+
+      function normalizeSettingValue(spec, rawValue) {
+        const kind = String(spec?.kind || "").trim();
+        if (kind === "toggle") {
+          return Number(rawValue) ? 1 : 0;
+        }
+        if (kind === "select") {
+          const allowed = Array.isArray(spec?.values)
+            ? spec.values.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+            : [];
+          const fallback = allowed.length ? allowed[0] : 0;
+          const parsed = Number(rawValue);
+          if (!Number.isFinite(parsed)) {
+            return fallback;
+          }
+          return allowed.includes(parsed) ? parsed : fallback;
+        }
+        const min = Number(spec?.min ?? 0);
+        const max = Number(spec?.max ?? 100);
+        const step = Number(spec?.step ?? 1);
+        let parsed = Number(rawValue);
+        if (!Number.isFinite(parsed)) {
+          parsed = min;
+        }
+        parsed = Math.max(min, Math.min(max, parsed));
+        if (Number.isFinite(step) && step > 0) {
+          parsed = Math.round((parsed - min) / step) * step + min;
+        }
+        return Math.round(parsed);
+      }
+
+      function cameraSettingDisplayValue(spec, value) {
+        if (String(spec?.kind || "") === "toggle") {
+          return Number(value) ? "On" : "Off";
+        }
+        return String(value);
+      }
+
+      function settingValueNodeId(key) {
+        return `camera-setting-value-${key}`;
+      }
+
+      function setBadgeState(nodeId, text, tone = "") {
+        const node = document.getElementById(nodeId);
+        if (!node) {
+          return;
+        }
+        node.textContent = text;
+        node.classList.remove("ok", "warn", "danger");
+        if (tone) {
+          node.classList.add(tone);
+        }
+      }
+
+      function setSystemServerControlNote(text) {
+        const node = document.getElementById("system-server-control-note");
+        if (!node) {
+          return;
+        }
+        node.textContent = String(text || "").trim() || "No pending server action.";
+      }
+
+      function setSystemServerControlButtonsDisabled(disabled) {
+        const shutdownBtn = document.getElementById("system-shutdown-btn");
+        const rebootBtn = document.getElementById("system-reboot-btn");
+        if (shutdownBtn) {
+          shutdownBtn.disabled = Boolean(disabled);
+        }
+        if (rebootBtn) {
+          rebootBtn.disabled = Boolean(disabled);
+        }
+      }
+
+      function clearServerActionTicker() {
+        if (serverActionCountdownTickerId !== null) {
+          window.clearInterval(serverActionCountdownTickerId);
+          serverActionCountdownTickerId = null;
+        }
+      }
+
+      function updateServerActionCountdown() {
+        const countdownNode = document.getElementById("server-action-countdown");
+        if (!countdownNode) {
+          return;
+        }
+        const remainingMs = Math.max(0, serverActionCountdownDeadlineMs - Date.now());
+        countdownNode.textContent = `${(remainingMs / 1000).toFixed(1)}s`;
+      }
+
+      function showServerActionBanner(action, executeAtUtc) {
+        const banner = document.getElementById("server-action-banner");
+        const textNode = document.getElementById("server-action-text");
+        if (!banner || !textNode) {
+          return;
+        }
+        const normalizedAction = String(action || "shutdown").trim().toLowerCase();
+        textNode.textContent = normalizedAction === "reboot" ? "Server rebooting" : "Server shutting down";
+
+        const parsedDeadline = Date.parse(String(executeAtUtc || ""));
+        serverActionCountdownDeadlineMs = Number.isFinite(parsedDeadline)
+          ? parsedDeadline
+          : Date.now() + 5000;
+        updateServerActionCountdown();
+        clearServerActionTicker();
+        serverActionCountdownTickerId = window.setInterval(updateServerActionCountdown, 100);
+        banner.classList.add("show");
+      }
+
+      function hideServerActionBanner() {
+        const banner = document.getElementById("server-action-banner");
+        if (!banner) {
+          return;
+        }
+        banner.classList.remove("show");
+        clearServerActionTicker();
+        serverActionStateSignature = "";
+      }
+
+      function applyServerControlState(state) {
+        const payload = state && typeof state === "object" ? state : {};
+        const pending = Boolean(payload.pending);
+        if (!pending) {
+          hideServerActionBanner();
+          setSystemServerControlButtonsDisabled(false);
+          setSystemServerControlNote("No pending server action.");
+          return;
+        }
+        setSystemServerControlButtonsDisabled(true);
+        const action = String(payload.action || "shutdown").trim().toLowerCase();
+        const executeAtUtc = String(payload.execute_at_utc || "");
+        const remainingSeconds = Number(payload.remaining_seconds);
+        const remainingLabel = Number.isFinite(remainingSeconds) ? `${remainingSeconds.toFixed(1)}s` : "--";
+        const actionLabel = action === "reboot" ? "Reboot" : "Shutdown";
+        setSystemServerControlNote(`${actionLabel} scheduled. Countdown ${remainingLabel}.`);
+        const signature = `${action}|${executeAtUtc}`;
+        if (signature !== serverActionStateSignature) {
+          serverActionStateSignature = signature;
+          showServerActionBanner(action, executeAtUtc);
+          return;
+        }
+        const parsedDeadline = Date.parse(executeAtUtc);
+        if (Number.isFinite(parsedDeadline)) {
+          serverActionCountdownDeadlineMs = parsedDeadline;
+        }
+      }
+
+      async function scheduleSystemServerAction(action) {
+        const selected = String(action || "").trim().toLowerCase() === "reboot" ? "reboot" : "shutdown";
+        const label = selected === "reboot" ? "reboot" : "shutdown";
+        const confirmed = window.confirm(
+          `Confirm backend ${label}? It will execute in ${SYSTEM_SERVER_ACTION_DELAY_SECONDS} seconds.`
+        );
+        if (!confirmed) {
+          return;
+        }
+        try {
+          const result = await fetch(
+            `/api/server/control?action=${selected}&delay_seconds=${SYSTEM_SERVER_ACTION_DELAY_SECONDS}`,
+            { method: "POST" }
+          );
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `server control request failed (${result.status})`);
+          }
+          applyServerControlState(json?.state);
+        } catch (error) {
+          setSystemServerControlNote(`Server control request failed: ${String(error)}`);
+          setSystemServerControlButtonsDisabled(false);
+        }
+      }
+
+      function modeDisplayName(mode) {
+        const text = String(mode || "").trim();
+        if (!text) {
+          return "--";
+        }
+        return text.replace(/_/g, " ");
+      }
+
+      function toneForSyncStatus(syncStatus) {
+        const value = String(syncStatus || "").trim();
+        if (value === "in_sync") {
+          return "ok";
+        }
+        if (value === "reapplying") {
+          return "warn";
+        }
+        if (value === "drift_detected" || value === "camera_unavailable") {
+          return "danger";
+        }
+        return "";
+      }
+
+      function syncLabelForStatus(syncStatus) {
+        const value = String(syncStatus || "").trim();
+        if (value === "in_sync") {
+          return "Sync: In Sync";
+        }
+        if (value === "drift_detected") {
+          return "Sync: D-Sync";
+        }
+        if (value === "reapplying") {
+          return "Sync: Reapplying";
+        }
+        if (value === "camera_unavailable") {
+          return "Sync: Camera Unavailable";
+        }
+        return `Sync: ${value || "--"}`;
+      }
+
+      function updateCameraModeBadges(modeState) {
+        const syncStatus = String(modeState?.sync_status || "unknown");
+        const activeMode = String(modeState?.active_mode || "--");
+        setBadgeState("camera-sync-badge", syncLabelForStatus(syncStatus), toneForSyncStatus(syncStatus));
+        setBadgeState("camera-mode-badge", `Mode: ${modeDisplayName(activeMode)}`);
+      }
+
+      function cameraModeSelectNode() {
+        return document.getElementById("camera-mode-name");
+      }
+
+      function markCameraModeSelectionDirty() {
+        const node = cameraModeSelectNode();
+        if (!node) {
+          return;
+        }
+        const selected = String(node.value || "base").trim();
+        cameraModeSelectionDirty = selected !== String(cameraModeLastServerValue || "base").trim();
+      }
+
+      function deriveCanonicalModeSettings(modeState) {
+        const modes = modeState?.canonical_state?.modes || {};
+        const activeMode = String(modeState?.active_mode || "base");
+        const modeSlot = modes?.[activeMode] || {};
+        return modeSlot?.settings && typeof modeSlot.settings === "object" ? modeSlot.settings : {};
+      }
+
+      function syncCameraSettingsFromModeState(modeState, options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const spec = Array.isArray(modeState?.settings_spec) ? modeState.settings_spec : [];
+        const activeMode = String(modeState?.active_mode || "base");
+        const fromCanonical = deriveCanonicalModeSettings(modeState);
+        const next = {};
+        for (const item of spec) {
+          const key = String(item?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          const currentCandidate = keepEdits && cameraSettingsInitialized ? cameraSettingsValues[key] : undefined;
+          const sourceCandidate =
+            typeof fromCanonical[key] !== "undefined"
+              ? fromCanonical[key]
+              : typeof currentCandidate !== "undefined"
+                ? currentCandidate
+                : item?.values?.[0] ?? item?.min ?? 0;
+          next[key] = normalizeSettingValue(item, sourceCandidate);
+        }
+        const shouldResetEditor =
+          !cameraSettingsInitialized || !keepEdits || activeMode !== cameraSettingsSourceMode;
+        if (shouldResetEditor) {
+          cameraSettingsValues = next;
+          cameraSettingsInitialized = true;
+        } else {
+          for (const [key, value] of Object.entries(next)) {
+            if (typeof cameraSettingsValues[key] === "undefined") {
+              cameraSettingsValues[key] = value;
+            }
+          }
+        }
+        cameraSettingsSourceMode = activeMode;
+      }
+
+      function renderCameraSettingsGrid(specList) {
+        const grid = document.getElementById("camera-settings-grid");
+        grid.innerHTML = "";
+        if (!Array.isArray(specList) || !specList.length) {
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No curated settings available.";
+          grid.appendChild(empty);
+          return;
+        }
+        for (const spec of specList) {
+          const key = String(spec?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          const card = document.createElement("div");
+          card.className = "setting-card";
+          const label = document.createElement("div");
+          label.className = "setting-label";
+          label.textContent = String(spec?.label || key);
+          const valueNode = document.createElement("div");
+          valueNode.className = "setting-value";
+          valueNode.id = settingValueNodeId(key);
+          const reportedNode = document.createElement("div");
+          reportedNode.className = "setting-reported";
+
+          const normalized = normalizeSettingValue(spec, cameraSettingsValues[key]);
+          cameraSettingsValues[key] = normalized;
+          valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, normalized)}`;
+          if (Object.prototype.hasOwnProperty.call(cameraReportedSettings, key)) {
+            reportedNode.textContent = `Reported: ${cameraSettingDisplayValue(spec, cameraReportedSettings[key])}`;
+          } else {
+            reportedNode.textContent = "Reported: Not reported";
+          }
+
+          card.appendChild(label);
+          card.appendChild(valueNode);
+          card.appendChild(reportedNode);
+
+          const kind = String(spec?.kind || "").trim();
+          if (kind === "toggle") {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "setting-control";
+            button.textContent = Number(normalized) ? "On" : "Off";
+            button.addEventListener("click", () => {
+              const nextValue = Number(cameraSettingsValues[key]) ? 0 : 1;
+              cameraSettingsValues[key] = nextValue;
+              button.textContent = nextValue ? "On" : "Off";
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(button);
+          } else if (kind === "select") {
+            const select = document.createElement("select");
+            select.className = "setting-control";
+            const values = Array.isArray(spec?.values) ? spec.values : [];
+            values.forEach((raw) => {
+              const optionValue = Number(raw);
+              const option = document.createElement("option");
+              option.value = String(optionValue);
+              option.textContent = String(optionValue);
+              if (optionValue === Number(normalized)) {
+                option.selected = true;
+              }
+              select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+              const nextValue = normalizeSettingValue(spec, Number(select.value));
+              cameraSettingsValues[key] = nextValue;
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(select);
+          } else {
+            const range = document.createElement("input");
+            range.type = "range";
+            range.className = "setting-control";
+            range.min = String(spec?.min ?? 0);
+            range.max = String(spec?.max ?? 100);
+            range.step = String(spec?.step ?? 1);
+            range.value = String(normalized);
+            range.addEventListener("input", () => {
+              const nextValue = normalizeSettingValue(spec, Number(range.value));
+              cameraSettingsValues[key] = nextValue;
+              valueNode.textContent = `Editor: ${cameraSettingDisplayValue(spec, nextValue)}`;
+            });
+            card.appendChild(range);
+          }
+          grid.appendChild(card);
+        }
+      }
+
+      function cameraSettingsPayload() {
+        const payload = {};
+        for (const spec of currentCameraSettingsSpec) {
+          const key = String(spec?.key || "").trim();
+          if (!key) {
+            continue;
+          }
+          payload[key] = normalizeSettingValue(spec, cameraSettingsValues[key]);
+        }
+        return payload;
+      }
+
+      async function parseJsonResponse(response) {
+        try {
+          return await response.json();
+        } catch (error) {
+          return { ok: false, error: String(error) };
+        }
+      }
+
+      function applyModeStatePayload(payload, options = {}) {
+        currentCameraModeState = payload;
+        currentCameraSettingsSpec = Array.isArray(payload?.settings_spec) ? payload.settings_spec : [];
+        cameraReportedSettings =
+          payload?.last_camera_status?.controls && typeof payload.last_camera_status.controls === "object"
+            ? payload.last_camera_status.controls
+            : {};
+        syncCameraSettingsFromModeState(payload, { keepEdits: Boolean(options.keepEdits ?? true) });
+        renderCameraSettingsGrid(currentCameraSettingsSpec);
+        updateCameraModeBadges(payload);
+        const serverMode = String(payload?.active_mode || "base");
+        cameraModeLastServerValue = serverMode;
+        const modeSelect = cameraModeSelectNode();
+        if (modeSelect) {
+          const selectedNow = String(modeSelect.value || "base").trim();
+          const hasPendingUserSelection = selectedNow !== serverMode;
+          if (!hasPendingUserSelection) {
+            modeSelect.value = serverMode;
+            cameraModeSelectionDirty = false;
+          } else {
+            cameraModeSelectionDirty = true;
+          }
+        }
+        const statusProfile = String(payload?.last_camera_status?.active_profile || "").trim();
+        if (statusProfile) {
+          setCameraActiveProfileLabel(statusProfile);
+        }
+        const controlPanel = payload?.camera_control || {};
+        const baseUrl = String(controlPanel?.base_url || "--");
+        const enabled = Boolean(controlPanel?.enabled);
+        const tokenConfigured = Boolean(controlPanel?.token_configured);
+        document.getElementById("camera-control-note").textContent = enabled
+          ? `Camera control enabled at ${baseUrl} | token ${tokenConfigured ? "configured" : "missing"}`
+          : "Camera control disabled in runtime config.";
+        renderCameraModeHelp();
+        document.getElementById("camera-mode-state-output").textContent = JSON.stringify(payload, null, 2);
+        renderReadablePanel(
+          "camera-mode-state-readable",
+          "Mode Engine State",
+          {
+            active_mode: payload?.active_mode,
+            sync_status: payload?.sync_status,
+            drift_detail: payload?.drift_detail,
+            last_reconcile_action: payload?.last_reconcile_action,
+            effective_owners: payload?.effective_owners,
+            last_error: payload?.last_error,
+            last_camera_status: payload?.last_camera_status,
+          },
+          { maxDepth: 2 }
+        );
+      }
+
+      async function refreshCameraModeState(options = {}) {
+        const quiet = Boolean(options.quiet);
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        try {
+          const result = await fetch("/api/camera-control/mode-state");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `mode-state request failed (${result.status})`);
+          }
+          applyModeStatePayload(json, { keepEdits });
+          if (!quiet) {
+            setCameraControlOutput("Mode State Refreshed", json);
+          }
+        } catch (error) {
+          if (!quiet) {
+            setCameraControlOutput("Mode State Error", { error: String(error) });
+          }
+        }
+      }
+
+      async function setCameraMode() {
+        const modeName = String(document.getElementById("camera-mode-name").value || "base").trim();
+        const response = await fetch(`/api/camera-control/mode?name=${encodeURIComponent(modeName)}`, {
+          method: "POST",
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Set Camera Mode Error", json);
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput(`Camera Mode Set (${modeName})`, {
+          ...json,
+          note: "Active mode policy now owns camera behavior. Quick manual profile tests are treated as temporary.",
+        });
+        await refreshCameraAutomationStatus({ quiet: true });
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function adoptCurrentCameraState() {
+        const response = await fetch("/api/camera-control/sync/adopt-current", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Adopt Current State Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Adopt Current Camera State", json);
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function reapplyCanonicalCameraPolicy() {
+        const response = await fetch("/api/camera-control/sync/reapply-canonical", { method: "POST" });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Reapply Canonical Policy Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Reapply Canonical Policy", json);
+        await reconcileAndRefreshModeState({ keepEdits: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function applyTemporaryCameraSettings() {
+        const settings = cameraSettingsPayload();
+        const response = await fetch("/api/camera-control/settings/apply-temporary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Apply Temporary Settings Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Apply Temporary Settings", json);
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      async function saveManualCameraSettings() {
+        const settings = cameraSettingsPayload();
+        const response = await fetch("/api/camera-control/settings/save-manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          setCameraControlOutput("Save Manual Settings Error", json);
+          scrollCameraOutputIntoView();
+          return;
+        }
+        applyModeStatePayload(json, { keepEdits: false });
+        setCameraControlOutput("Save Manual Settings", json);
+        await refreshCameraControlStatus({ quiet: true, reconcileSync: true });
+        scrollCameraOutputIntoView();
+      }
+
+      function setUtilizationBar(fillNodeId, percent) {
+        const node = document.getElementById(fillNodeId);
+        if (!node) {
+          return;
+        }
+        node.style.width = `${clampPercent(percent).toFixed(1)}%`;
+      }
+
+      function renderStorageBreakdown(payload) {
+        const segmentsNode = document.getElementById("system-storage-segments");
+        const legendNode = document.getElementById("system-storage-legend");
+        segmentsNode.innerHTML = "";
+        legendNode.innerHTML = "";
+
+        const segments = Array.isArray(payload?.storage_breakdown?.segments)
+          ? payload.storage_breakdown.segments
+          : [];
+        const usedBytes = Number(payload?.drive?.used_bytes ?? payload?.storage_breakdown?.used_bytes ?? 0);
+        const totalBytes = Number(payload?.drive?.total_bytes ?? payload?.storage_breakdown?.total_bytes ?? 0);
+        const usedPercent = clampPercent(payload?.drive?.percent);
+        segmentsNode.style.width = `${usedPercent.toFixed(1)}%`;
+        const storageShell = document.getElementById("system-storage-shell");
+        const shellWidthPx = Number(storageShell?.clientWidth ?? 0);
+        const usedWidthPx = shellWidthPx > 0 ? (shellWidthPx * usedPercent) / 100 : 0;
+        const colorByKey = {
+          logs: "#60a5fa",
+          captures: "#22c55e",
+          videos: "#f59e0b",
+          events_db: "#ef4444",
+          misc: "#6b7280",
+        };
+
+        const rawPercents = segments.map((segment) => {
+          const bytes = Number(segment?.bytes ?? 0);
+          return usedBytes > 0 ? (bytes / usedBytes) * 100 : 0;
+        });
+        const adjustedPercents = rawPercents.slice();
+        const minSlicePercent =
+          usedWidthPx > 0 ? Math.min(14, (2 / usedWidthPx) * 100) : 2.0;
+        const positiveIndexes = adjustedPercents
+          .map((value, index) => ({ value, index, bytes: Number(segments[index]?.bytes ?? 0) }))
+          .filter((entry) => entry.bytes > 0 && entry.value > 0)
+          .map((entry) => entry.index);
+
+        let addedPercent = 0;
+        for (const index of positiveIndexes) {
+          if (adjustedPercents[index] < minSlicePercent) {
+            addedPercent += minSlicePercent - adjustedPercents[index];
+            adjustedPercents[index] = minSlicePercent;
+          }
+        }
+        if (addedPercent > 0 && positiveIndexes.length) {
+          const shrinkOrder = positiveIndexes
+            .slice()
+            .sort((left, right) => adjustedPercents[right] - adjustedPercents[left]);
+          for (const index of shrinkOrder) {
+            if (addedPercent <= 0) {
+              break;
+            }
+            const available = Math.max(0, adjustedPercents[index] - minSlicePercent);
+            if (available <= 0) {
+              continue;
+            }
+            const shrinkBy = Math.min(available, addedPercent);
+            adjustedPercents[index] -= shrinkBy;
+            addedPercent -= shrinkBy;
+          }
+        }
+        const adjustedTotal = adjustedPercents.reduce((sum, value) => sum + Math.max(0, value), 0);
+        const normalizedPercents =
+          adjustedTotal > 0 ? adjustedPercents.map((value) => (Math.max(0, value) / adjustedTotal) * 100) : adjustedPercents;
+
+        for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+          const segment = segments[segmentIndex];
+          const bytes = Number(segment?.bytes ?? 0);
+          const widthPct = Number(normalizedPercents[segmentIndex] ?? 0);
+          const color = String(colorByKey[String(segment?.key || "")] || segment?.color || "#6b7280");
+          const label = String(segment?.label || segment?.key || "Unknown");
+          const pctOfUsed = Number(segment?.percent_of_used ?? 0);
+
+          const segmentDiv = document.createElement("div");
+          segmentDiv.className = "storage-segment";
+          segmentDiv.style.width = `${clampPercent(widthPct).toFixed(3)}%`;
+          segmentDiv.style.background = color;
+          segmentDiv.title = `${label}: ${formatBytes(bytes)} (${pctOfUsed.toFixed(1)}% of used)`;
+          segmentsNode.appendChild(segmentDiv);
+
+          const item = document.createElement("div");
+          item.className = "storage-legend-item";
+          const left = document.createElement("div");
+          left.className = "storage-legend-left";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.background = color;
+          const name = document.createElement("span");
+          name.textContent = label;
+          left.appendChild(swatch);
+          left.appendChild(name);
+          const right = document.createElement("span");
+          const pctOfTotal = totalBytes > 0 ? (bytes / totalBytes) * 100 : 0;
+          right.textContent = `${formatBytes(bytes)} (${pctOfTotal.toFixed(1)}%)`;
+          item.appendChild(left);
+          item.appendChild(right);
+          legendNode.appendChild(item);
+        }
+      }
+
+      function renderSystemUtilization(payload) {
+        const cpuPct = clampPercent(payload?.cpu?.percent ?? 0);
+        const cores = Number(payload?.cpu?.logical_cores ?? 0);
+        document.getElementById("system-cpu-value").textContent = `${cpuPct.toFixed(1)}% / 100% (${cores} cores)`;
+        setUtilizationBar("system-cpu-bar", cpuPct);
+
+        const ramUsed = Number(payload?.ram?.used_bytes ?? 0);
+        const ramTotal = Number(payload?.ram?.total_bytes ?? 0);
+        const ramPct = clampPercent(payload?.ram?.percent ?? 0);
+        document.getElementById("system-ram-value").textContent = `${formatBytes(ramUsed)} / ${formatBytes(ramTotal)} (${ramPct.toFixed(1)}%)`;
+        setUtilizationBar("system-ram-bar", ramPct);
+
+        const driveUsed = Number(payload?.drive?.used_bytes ?? 0);
+        const driveTotal = Number(payload?.drive?.total_bytes ?? 0);
+        const driveFree = Number(payload?.drive?.free_bytes ?? 0);
+        const drivePct = clampPercent(payload?.drive?.percent ?? 0);
+        document.getElementById("system-storage-value").textContent =
+          `${formatBytes(driveUsed)} / ${formatBytes(driveTotal)} (${drivePct.toFixed(1)}%, free ${formatBytes(driveFree)})`;
+        setUtilizationBar("system-storage-bar", drivePct);
+        renderStorageBreakdown(payload);
+      }
+
+      async function loadSystemUtilization() {
+        try {
+          const result = await fetch("/api/system/utilization");
+          const json = await parseJsonResponse(result);
+          if (!result.ok) {
+            throw new Error(json?.detail || `system utilization failed (${result.status})`);
+          }
+          renderSystemUtilization(json);
+        } catch (error) {
+          document.getElementById("system-cpu-value").textContent = "Unavailable";
+          document.getElementById("system-ram-value").textContent = "Unavailable";
+          document.getElementById("system-storage-value").textContent = "Unavailable";
+          setUtilizationBar("system-cpu-bar", 0);
+          setUtilizationBar("system-ram-bar", 0);
+          setUtilizationBar("system-storage-bar", 0);
+          document.getElementById("system-storage-segments").innerHTML = "";
+          document.getElementById("system-storage-legend").innerHTML = "";
+          console.error(error);
+        }
       }
 
       function updateNoScrollState() {
         const shell = document.getElementById("live-shell");
-        const modal = document.getElementById("event-modal");
+        const eventModal = document.getElementById("event-modal");
+        const savedModal = document.getElementById("saved-modal");
+        const savedVideoModal = document.getElementById("saved-video-modal");
         const mobileFullscreen = shell?.classList.contains("mobile-fullscreen");
-        const modalOpen = modal?.classList.contains("open");
-        document.body.classList.toggle("no-scroll", Boolean(mobileFullscreen || modalOpen));
+        const eventModalOpen = eventModal?.classList.contains("open");
+        const savedModalOpen = savedModal?.classList.contains("open");
+        const savedVideoModalOpen = savedVideoModal?.classList.contains("open");
+        document.body.classList.toggle(
+          "no-scroll",
+          Boolean(mobileFullscreen || eventModalOpen || savedModalOpen || savedVideoModalOpen)
+        );
       }
 
       function safeNum(value, decimals = 2) {
@@ -1008,6 +3260,25 @@
           return String(tsUtc);
         }
         return parsed.toLocaleString();
+      }
+
+      function formatRemainingSeconds(totalSeconds) {
+        const n = Number(totalSeconds);
+        if (!Number.isFinite(n) || n < 0) {
+          return "--";
+        }
+        const s = Math.floor(n);
+        const days = Math.floor(s / 86400);
+        const hours = Math.floor((s % 86400) / 3600);
+        const mins = Math.floor((s % 3600) / 60);
+        const secs = s % 60;
+        if (days > 0) {
+          return `${days}d ${hours}h ${mins}m ${secs}s`;
+        }
+        if (hours > 0) {
+          return `${hours}h ${mins}m ${secs}s`;
+        }
+        return `${mins}m ${secs}s`;
       }
 
       function resolveMediaUrl(ref) {
@@ -1035,6 +3306,16 @@
         return `/${normalized}`;
       }
 
+      function withCacheBust(url, seed) {
+        const base = String(url || "").trim();
+        if (!base) {
+          return "";
+        }
+        const key = String(seed || "").trim() || String(Date.now());
+        const sep = base.includes("?") ? "&" : "?";
+        return `${base}${sep}v=${encodeURIComponent(key)}`;
+      }
+
       function createModalMetaRow(label, value) {
         const row = document.createElement("div");
         row.className = "event-modal-row";
@@ -1051,6 +3332,7 @@
         const modal = document.getElementById("event-modal");
         modal.classList.remove("open");
         modal.setAttribute("aria-hidden", "true");
+        selectedEventForModal = null;
         setTimeout(() => {
           if (!modal.classList.contains("open")) {
             modal.classList.add("hidden");
@@ -1066,7 +3348,7 @@
         }
         return (
           mediaItems.find((item) => item.kind === "video" && item.sourceEventId === event.id) ||
-          mediaItems.find((item) => item.kind === "video" && item.url === clipUrl) ||
+          mediaItems.find((item) => item.kind === "video" && item.clipPath === clipUrl) ||
           null
         );
       }
@@ -1076,8 +3358,11 @@
         const image = document.getElementById("event-modal-image");
         const meta = document.getElementById("event-modal-meta");
         const watchBtn = document.getElementById("event-modal-watch");
+        const saveBtn = document.getElementById("event-modal-save");
+        const deleteBtn = document.getElementById("event-modal-delete");
         const snapshotUrl = resolveMediaUrl(event.snapshot);
-        const hasClip = Boolean(resolveMediaUrl(event.clip));
+        const hasClip = Boolean(event.has_clip) && Boolean(resolveMediaUrl(event.clip));
+        selectedEventForModal = event;
 
         if (snapshotUrl) {
           image.src = `${snapshotUrl}?t=${Date.now()}`;
@@ -1099,6 +3384,14 @@
             event.delete_after_ts_utc ? toLocalTime(event.delete_after_ts_utc) : "--"
           )
         );
+        meta.appendChild(
+          createModalMetaRow(
+            "Time Remaining",
+            event.delete_after_seconds_remaining != null
+              ? formatRemainingSeconds(event.delete_after_seconds_remaining)
+              : "--"
+          )
+        );
 
         watchBtn.disabled = !hasClip;
         watchBtn.textContent = hasClip ? "Watch Event Video" : "No Event Video";
@@ -1111,7 +3404,28 @@
           const item = findMediaItemByEventClip(event);
           if (item) {
             selectMediaItem(item, { autoplay: true });
+            return;
           }
+          const clipUrl = resolveMediaUrl(event.clip);
+          if (clipUrl) {
+            selectMediaItem(
+              {
+                key: `event-clip-${event.id}`,
+                kind: "video",
+                url: clipUrl,
+                thumbnailUrl: resolveMediaUrl(event.snapshot),
+                title: `Event Clip #${event.id}`,
+                subtitle: `${event.label ?? "event"} | ${toLocalTime(event.ts_utc)}`,
+                sourceEventId: Number(event.id ?? 0) || null,
+              },
+              { autoplay: true }
+            );
+          }
+        };
+        saveBtn.disabled = !hasClip;
+        deleteBtn.disabled = false;
+        deleteBtn.onclick = () => {
+          deleteEventFromModal().catch(console.error);
         };
 
         modal.classList.remove("hidden");
@@ -1122,11 +3436,113 @@
         });
       }
 
+      function suggestSavedTitleFromEvent(event) {
+        const label = String(event?.label || "event").trim() || "event";
+        const when = event?.ts_utc ? toLocalTime(event.ts_utc) : new Date().toLocaleString();
+        return `${label} ${when}`;
+      }
+
+      async function saveEventFromModal() {
+        if (!selectedEventForModal) {
+          return;
+        }
+        const defaultTitle = suggestSavedTitleFromEvent(selectedEventForModal);
+        const entered = window.prompt("Save title", defaultTitle);
+        if (entered === null) {
+          return;
+        }
+        const title = String(entered || "").trim() || defaultTitle;
+        const response = await fetch("/api/saved", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event_id: Number(selectedEventForModal.id),
+            source_type: "event",
+            title,
+          }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json?.detail || `save failed (${response.status})`);
+        }
+        await loadSavedItems({ resetOffset: true }).catch(console.error);
+      }
+
+      async function deleteEventFromModal() {
+        if (!selectedEventForModal) {
+          return;
+        }
+        const eventId = Number(selectedEventForModal.id);
+        if (!Number.isFinite(eventId) || eventId <= 0) {
+          return;
+        }
+        if (!window.confirm("Delete this event and its linked media files?")) {
+          return;
+        }
+        const response = await fetch(`/api/events/${encodeURIComponent(eventId)}?delete_files=true`, {
+          method: "DELETE",
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json?.detail || `event delete failed (${response.status})`);
+        }
+        closeEventModal();
+        await loadEvents({ resetOffset: false }).catch(console.error);
+        await loadRecordings({ resetOffset: false }).catch(console.error);
+        await loadSavedItems({ resetOffset: false }).catch(console.error);
+      }
+
+      async function saveSelectedRecordingItem() {
+        const item = mediaItems.find((entry) => entry.key === selectedMediaKey);
+        if (!item || item.kind !== "video") {
+          return;
+        }
+        const defaultTitle = `Saved ${item.title}`;
+        const entered = window.prompt("Save title", defaultTitle);
+        if (entered === null) {
+          return;
+        }
+        const title = String(entered || "").trim() || defaultTitle;
+        const response = await fetch("/api/saved", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_type: item.sourceEventId ? "event_recording" : "recording",
+            event_id: item.sourceEventId || undefined,
+            clip_path: item.clipPath || item.url,
+            snapshot_path: item.snapshotPath || item.thumbnailUrl || undefined,
+            title,
+          }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json?.detail || `save failed (${response.status})`);
+        }
+        await loadSavedItems({ resetOffset: true }).catch(console.error);
+      }
+
       function updateSelectedMediaCard() {
         const cards = document.querySelectorAll(".media-card");
         cards.forEach((card) => {
           card.classList.toggle("selected", card.dataset.mediaKey === selectedMediaKey);
         });
+      }
+
+      function selectedMediaIndex() {
+        if (!selectedMediaKey) {
+          return -1;
+        }
+        return mediaItems.findIndex((item) => item.key === selectedMediaKey);
+      }
+
+      function selectAdjacentRecording(direction) {
+        if (!mediaItems.length) {
+          return;
+        }
+        const idx = selectedMediaIndex();
+        const start = idx >= 0 ? idx : 0;
+        const next = (start + direction + mediaItems.length) % mediaItems.length;
+        selectMediaItem(mediaItems[next], { autoplay: mediaItems[next].kind === "video" });
       }
 
       function selectMediaItem(item, options = {}) {
@@ -1158,6 +3574,7 @@
         if (player.src !== new URL(item.url, window.location.origin).href) {
           player.src = item.url;
         }
+        player.loop = true;
         note.textContent = `Playing video: ${item.title}`;
         if (autoplay) {
           player.play().catch(() => {});
@@ -1166,59 +3583,30 @@
 
       function buildMediaItems() {
         const items = [];
-        const seenVideoUrls = new Set();
-
-        for (const event of latestEvents) {
-          const snapshotUrl = resolveMediaUrl(event.snapshot);
-          const clipUrl = resolveMediaUrl(event.clip);
-          const eventTime = toLocalTime(event.ts_utc);
-          const confidence = safeNum(event.confidence);
-
-          if (snapshotUrl) {
-            items.push({
-              key: `event-${event.id}-snapshot`,
-              kind: "image",
-              url: snapshotUrl,
-              thumbnailUrl: snapshotUrl,
-              title: `Event Snapshot #${event.id}`,
-              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
-              sourceEventId: event.id,
-            });
-          }
-
-          if (clipUrl && !seenVideoUrls.has(clipUrl)) {
-            seenVideoUrls.add(clipUrl);
-            items.push({
-              key: `event-${event.id}-clip`,
-              kind: "video",
-              url: clipUrl,
-              thumbnailUrl: snapshotUrl,
-              title: `Event Clip #${event.id}`,
-              subtitle: `${event.label ?? "event"} | conf ${confidence} | ${eventTime}`,
-              sourceEventId: event.id,
-            });
-          }
-        }
-
         for (const recording of latestRecordings) {
-          const videoUrl = String(recording.url || "").trim();
-          if (!videoUrl || seenVideoUrls.has(videoUrl)) {
+          const clipPath = resolveMediaUrl(recording.url || "");
+          if (!clipPath) {
             continue;
           }
-          seenVideoUrls.add(videoUrl);
+          const snapshotPath = resolveMediaUrl(recording.snapshot_url || "");
           const mb = Number(recording.size_bytes || 0) / (1024 * 1024);
           const modifiedEpoch = Number(recording.modified_epoch);
+          const cacheSeed = Number.isFinite(modifiedEpoch) ? String(Math.floor(modifiedEpoch * 1000)) : "";
           const modified = Number.isFinite(modifiedEpoch)
             ? new Date(modifiedEpoch * 1000).toLocaleString()
             : "--";
           items.push({
             key: `recording-${recording.name}`,
             kind: "video",
-            url: videoUrl,
-            thumbnailUrl: "",
+            url: withCacheBust(clipPath, cacheSeed),
+            clipPath,
+            thumbnailUrl: snapshotPath,
+            snapshotPath,
             title: String(recording.name || "Recording"),
             subtitle: `${mb.toFixed(1)} MB | ${modified}`,
-            sourceEventId: null,
+            sourceEventId: Number.isFinite(Number(recording.source_event_id))
+              ? Number(recording.source_event_id)
+              : null,
           });
         }
         return items;
@@ -1232,7 +3620,7 @@
         if (!mediaItems.length) {
           const empty = document.createElement("div");
           empty.className = "muted";
-          empty.textContent = "No media yet. New snapshots and clips will appear here.";
+          empty.textContent = "No recordings match the current filters.";
           grid.appendChild(empty);
           selectedMediaKey = "";
           const player = document.getElementById("player");
@@ -1307,13 +3695,91 @@
         updateSelectedMediaCard();
       }
 
+      function updateEventsPagingUi() {
+        const info = document.getElementById("events-page-info");
+        const prevBtn = document.getElementById("events-page-prev");
+        const nextBtn = document.getElementById("events-page-next");
+        const total = Number(eventsPagination.total ?? 0);
+        const page = Number(eventsPagination.page ?? 1);
+        const pages = Number(eventsPagination.pages ?? 1);
+        info.textContent = `Page ${page} of ${pages} | Total ${total}`;
+        prevBtn.disabled = !Boolean(eventsPagination.has_prev);
+        nextBtn.disabled = !Boolean(eventsPagination.has_next);
+      }
+
+      function updateRecordingsPagingUi() {
+        const info = document.getElementById("recordings-page-info");
+        const prevBtn = document.getElementById("recordings-page-prev");
+        const nextBtn = document.getElementById("recordings-page-next");
+        const total = Number(recordingsPagination.total ?? 0);
+        const page = Number(recordingsPagination.page ?? 1);
+        const pages = Number(recordingsPagination.pages ?? 1);
+        info.textContent = `Page ${page} of ${pages} | Total ${total}`;
+        prevBtn.disabled = !Boolean(recordingsPagination.has_prev);
+        nextBtn.disabled = !Boolean(recordingsPagination.has_next);
+      }
+
+      function eventsQueryParams() {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(Math.max(0, Number(eventsPagination.offset ?? 0))));
+        params.set("q", String(eventsFiltersState.q || ""));
+        params.set("severity", String(eventsFiltersState.severity || "all"));
+        params.set("media", String(eventsFiltersState.media || "all"));
+        params.set("range", String(eventsFiltersState.range || "all"));
+        params.set("retention_queue", String(eventsFiltersState.retention_queue || "all"));
+        return params;
+      }
+
+      function recordingsQueryParams() {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(Math.max(0, Number(recordingsPagination.offset ?? 0))));
+        params.set("q", String(recordingsFiltersState.q || ""));
+        params.set("range", String(recordingsFiltersState.range || "all"));
+        params.set("sort", String(recordingsFiltersState.sort || "newest"));
+        return params;
+      }
+
+      function pullEventsFiltersFromUi() {
+        eventsFiltersState = {
+          q: String(document.getElementById("events-filter-q").value || "").trim(),
+          severity: String(document.getElementById("events-filter-severity").value || "all"),
+          media: String(document.getElementById("events-filter-media").value || "all"),
+          range: String(document.getElementById("events-filter-range").value || "all"),
+          retention_queue: String(document.getElementById("events-filter-retention").value || "all"),
+        };
+      }
+
+      function pullRecordingsFiltersFromUi() {
+        recordingsFiltersState = {
+          q: String(document.getElementById("recordings-filter-q").value || "").trim(),
+          range: String(document.getElementById("recordings-filter-range").value || "all"),
+          sort: String(document.getElementById("recordings-filter-sort").value || "newest"),
+        };
+      }
+
+      function resetEventsFiltersUi() {
+        document.getElementById("events-filter-q").value = "";
+        document.getElementById("events-filter-severity").value = "all";
+        document.getElementById("events-filter-media").value = "all";
+        document.getElementById("events-filter-range").value = "all";
+        document.getElementById("events-filter-retention").value = "all";
+      }
+
+      function resetRecordingsFiltersUi() {
+        document.getElementById("recordings-filter-q").value = "";
+        document.getElementById("recordings-filter-range").value = "all";
+        document.getElementById("recordings-filter-sort").value = "newest";
+      }
+
       function renderEventCards() {
         const grid = document.getElementById("events");
         grid.innerHTML = "";
         if (!latestEvents.length) {
           const empty = document.createElement("div");
           empty.className = "muted";
-          empty.textContent = "No events yet.";
+          empty.textContent = "No events match the current filters.";
           grid.appendChild(empty);
           return;
         }
@@ -1345,7 +3811,10 @@
           title.textContent = `${event.label ?? "event"} | conf ${safeNum(event.confidence)}`;
           const sub = document.createElement("div");
           sub.className = "event-sub";
-          sub.textContent = `${toLocalTime(event.ts_utc)} | ${event.severity_level ?? "unknown"} severity`;
+          const remaining = event.delete_after_seconds_remaining != null
+            ? formatRemainingSeconds(event.delete_after_seconds_remaining)
+            : "--";
+          sub.textContent = `${toLocalTime(event.ts_utc)} | ${event.severity_level ?? "unknown"} severity | delete in ${remaining}`;
           body.appendChild(title);
           body.appendChild(sub);
 
@@ -1356,19 +3825,482 @@
         }
       }
 
-      async function loadEvents() {
-        const result = await fetch("/api/events?limit=25");
-        const json = await result.json();
+      async function loadEvents(options = {}) {
+        const resetOffset = Boolean(options.resetOffset);
+        if (resetOffset) {
+          eventsPagination.offset = 0;
+        }
+        const result = await fetch(`/api/events?${eventsQueryParams().toString()}`);
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `events request failed (${result.status})`);
+        }
         latestEvents = Array.isArray(json.events) ? json.events : [];
+        const pagination = json.pagination || {};
+        eventsPagination = {
+          limit: Number(pagination.limit ?? PAGE_SIZE),
+          offset: Number(pagination.offset ?? eventsPagination.offset ?? 0),
+          total: Number(pagination.total ?? latestEvents.length),
+          page: Number(pagination.page ?? 1),
+          pages: Number(pagination.pages ?? 1),
+          has_prev: Boolean(pagination.has_prev),
+          has_next: Boolean(pagination.has_next),
+        };
+        updateEventsPagingUi();
         renderEventCards();
+      }
+
+      async function loadRecordings(options = {}) {
+        const resetOffset = Boolean(options.resetOffset);
+        if (resetOffset) {
+          recordingsPagination.offset = 0;
+        }
+        const result = await fetch(`/api/recordings?${recordingsQueryParams().toString()}`);
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `recordings request failed (${result.status})`);
+        }
+        latestRecordings = Array.isArray(json.recordings) ? json.recordings : [];
+        const pagination = json.pagination || {};
+        recordingsPagination = {
+          limit: Number(pagination.limit ?? PAGE_SIZE),
+          offset: Number(pagination.offset ?? recordingsPagination.offset ?? 0),
+          total: Number(pagination.total ?? latestRecordings.length),
+          page: Number(pagination.page ?? 1),
+          pages: Number(pagination.pages ?? 1),
+          has_prev: Boolean(pagination.has_prev),
+          has_next: Boolean(pagination.has_next),
+        };
+        updateRecordingsPagingUi();
         renderMediaGrid();
       }
 
-      async function loadRecordings() {
-        const result = await fetch("/api/recordings?limit=200");
-        const json = await result.json();
-        latestRecordings = Array.isArray(json.recordings) ? json.recordings : [];
-        renderMediaGrid();
+      function updateSavedPagingUi() {
+        const info = document.getElementById("saved-page-info");
+        const prevBtn = document.getElementById("saved-page-prev");
+        const nextBtn = document.getElementById("saved-page-next");
+        const total = Number(savedPagination.total ?? 0);
+        const page = Number(savedPagination.page ?? 1);
+        const pages = Number(savedPagination.pages ?? 1);
+        info.textContent = `Page ${page} of ${pages} | Total ${total}`;
+        prevBtn.disabled = !Boolean(savedPagination.has_prev);
+        nextBtn.disabled = !Boolean(savedPagination.has_next);
+      }
+
+      function savedQueryParams() {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(Math.max(0, Number(savedPagination.offset ?? 0))));
+        params.set("q", String(savedFiltersState.q || ""));
+        params.set("range", String(savedFiltersState.range || "all"));
+        params.set("sort", String(savedFiltersState.sort || "newest"));
+        return params;
+      }
+
+      function pullSavedFiltersFromUi() {
+        savedFiltersState = {
+          q: String(document.getElementById("saved-filter-q").value || "").trim(),
+          range: String(document.getElementById("saved-filter-range").value || "all"),
+          sort: String(document.getElementById("saved-filter-sort").value || "newest"),
+        };
+      }
+
+      function resetSavedFiltersUi() {
+        document.getElementById("saved-filter-q").value = "";
+        document.getElementById("saved-filter-range").value = "all";
+        document.getElementById("saved-filter-sort").value = "newest";
+      }
+
+      function selectedSavedIndex() {
+        if (!selectedSavedKey) {
+          return -1;
+        }
+        return savedItems.findIndex((item) => item.key === selectedSavedKey);
+      }
+
+      function selectedSavedItem() {
+        if (!selectedSavedKey) {
+          return null;
+        }
+        return savedItems.find((item) => item.key === selectedSavedKey) || null;
+      }
+
+      function updateSelectedSavedCards() {
+        const cards = document.querySelectorAll("#saved-grid .media-card");
+        cards.forEach((card) => {
+          card.classList.toggle("selected", card.dataset.mediaKey === selectedSavedKey);
+        });
+      }
+
+      function updateSavedVideoNavButtons() {
+        const prev = document.getElementById("saved-video-prev");
+        const next = document.getElementById("saved-video-next");
+        const disabled = savedItems.length < 2;
+        prev.disabled = disabled;
+        next.disabled = disabled;
+      }
+
+      function closeSavedModal() {
+        const modal = document.getElementById("saved-modal");
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        selectedSavedForModal = null;
+        setTimeout(() => {
+          if (!modal.classList.contains("open")) {
+            modal.classList.add("hidden");
+          }
+          updateNoScrollState();
+        }, 220);
+      }
+
+      function openSavedModal(item) {
+        if (!item) {
+          return;
+        }
+        selectedSavedKey = item.key;
+        selectedSavedForModal = item;
+        updateSelectedSavedCards();
+        const modal = document.getElementById("saved-modal");
+        const image = document.getElementById("saved-modal-image");
+        const meta = document.getElementById("saved-modal-meta");
+        const playBtn = document.getElementById("saved-modal-play");
+        const deleteBtn = document.getElementById("saved-modal-delete");
+
+        if (item.thumbnailUrl) {
+          image.src = `${item.thumbnailUrl}?t=${Date.now()}`;
+        } else {
+          image.removeAttribute("src");
+        }
+        image.alt = `${item.title} snapshot`;
+
+        meta.innerHTML = "";
+        meta.appendChild(createModalMetaRow("Saved ID", String(item.id ?? "--")));
+        meta.appendChild(createModalMetaRow("Title", String(item.title ?? "--")));
+        meta.appendChild(createModalMetaRow("Source", String(item.sourceType || "saved")));
+        meta.appendChild(createModalMetaRow("Created", toLocalTime(item.createdTs)));
+        meta.appendChild(createModalMetaRow("Linked Event", item.eventId ? String(item.eventId) : "--"));
+
+        playBtn.disabled = !Boolean(item.url);
+        playBtn.textContent = item.url ? "Play Saved Video" : "No Video";
+        playBtn.onclick = () => {
+          if (!item.url) {
+            return;
+          }
+          openSavedVideoModal(item, { autoplay: true });
+        };
+        deleteBtn.onclick = () => {
+          deleteSelectedSavedItem({ closeModal: true }).catch(console.error);
+        };
+
+        modal.classList.remove("hidden");
+        modal.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(() => {
+          modal.classList.add("open");
+          updateNoScrollState();
+        });
+      }
+
+      function closeSavedVideoModal() {
+        const modal = document.getElementById("saved-video-modal");
+        const player = document.getElementById("saved-video-player");
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        player.pause();
+        setTimeout(() => {
+          if (!modal.classList.contains("open")) {
+            modal.classList.add("hidden");
+          }
+          updateNoScrollState();
+        }, 220);
+      }
+
+      function openSavedVideoModal(item, options = {}) {
+        const target = item || selectedSavedItem();
+        if (!target || !target.url) {
+          return;
+        }
+        const savedModal = document.getElementById("saved-modal");
+        if (savedModal.classList.contains("open")) {
+          closeSavedModal();
+        }
+        selectedSavedKey = target.key;
+        updateSelectedSavedCards();
+        updateSavedVideoNavButtons();
+        const modal = document.getElementById("saved-video-modal");
+        const title = document.getElementById("saved-video-title");
+        const player = document.getElementById("saved-video-player");
+        const autoplay = options.autoplay !== false;
+        title.textContent = target.title || "Saved Video";
+        if (player.src !== new URL(target.url, window.location.origin).href) {
+          player.src = target.url;
+        }
+        player.loop = true;
+        modal.classList.remove("hidden");
+        modal.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(() => {
+          modal.classList.add("open");
+          updateNoScrollState();
+          if (autoplay) {
+            player.play().catch(() => {});
+          }
+        });
+      }
+
+      function selectSavedAdjacent(direction, options = {}) {
+        if (!savedItems.length) {
+          return;
+        }
+        const idx = selectedSavedIndex();
+        const start = idx >= 0 ? idx : 0;
+        const next = (start + direction + savedItems.length) % savedItems.length;
+        const target = savedItems[next];
+        selectedSavedKey = target.key;
+        updateSelectedSavedCards();
+        if (options.openModal) {
+          openSavedModal(target);
+          return;
+        }
+        if (options.openVideo) {
+          openSavedVideoModal(target, { autoplay: true });
+        }
+      }
+
+      function renderSavedGrid() {
+        const grid = document.getElementById("saved-grid");
+        grid.innerHTML = "";
+        if (!savedItems.length) {
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No saved items match the current filters.";
+          grid.appendChild(empty);
+          selectedSavedKey = "";
+          closeSavedVideoModal();
+          closeSavedModal();
+          return;
+        }
+        for (const item of savedItems) {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "media-card";
+          card.dataset.mediaKey = item.key;
+
+          const thumbWrap = document.createElement("div");
+          thumbWrap.className = "media-card-thumb";
+          if (item.thumbnailUrl) {
+            const img = document.createElement("img");
+            img.src = `${item.thumbnailUrl}?t=${Date.now()}`;
+            img.alt = item.title;
+            thumbWrap.appendChild(img);
+          } else {
+            const fallback = document.createElement("div");
+            fallback.className = "media-card-thumb-fallback";
+            fallback.textContent = "Saved";
+            thumbWrap.appendChild(fallback);
+          }
+
+          const badge = document.createElement("div");
+          badge.className = "media-kind-badge";
+          badge.textContent = "Saved";
+          thumbWrap.appendChild(badge);
+
+          const body = document.createElement("div");
+          body.className = "media-card-body";
+          const title = document.createElement("div");
+          title.className = "media-card-title";
+          title.textContent = item.title;
+          const sub = document.createElement("div");
+          sub.className = "media-card-sub";
+          sub.textContent = item.subtitle;
+          body.appendChild(title);
+          body.appendChild(sub);
+          card.appendChild(thumbWrap);
+          card.appendChild(body);
+          card.addEventListener("click", () => openSavedModal(item));
+          grid.appendChild(card);
+        }
+        if (selectedSavedKey) {
+          const selected = savedItems.find((item) => item.key === selectedSavedKey);
+          if (selected) {
+            updateSelectedSavedCards();
+            return;
+          }
+          selectedSavedKey = "";
+          closeSavedVideoModal();
+          closeSavedModal();
+        }
+      }
+
+      async function loadSavedItems(options = {}) {
+        const resetOffset = Boolean(options.resetOffset);
+        if (resetOffset) {
+          savedPagination.offset = 0;
+        }
+        const result = await fetch(`/api/saved?${savedQueryParams().toString()}`);
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `saved request failed (${result.status})`);
+        }
+        const rows = Array.isArray(json.saved_items) ? json.saved_items : [];
+        savedItems = rows
+          .map((row) => {
+            const clipPath = resolveMediaUrl(row.clip);
+            const snapshotPath = resolveMediaUrl(row.snapshot);
+            const cacheSeed = `${String(row.updated_ts_utc || "")}|${String(row.created_ts_utc || "")}`;
+            return {
+              key: `saved-${row.id}`,
+              id: Number(row.id),
+              kind: "video",
+              clipPath,
+              snapshotPath,
+              url: withCacheBust(clipPath, cacheSeed),
+              thumbnailUrl: snapshotPath,
+              title: String(row.title || `Saved #${row.id}`),
+              subtitle: `${row.source_type || "saved"} | ${toLocalTime(row.created_ts_utc)}`,
+              sourceType: String(row.source_type || "saved"),
+              createdTs: String(row.created_ts_utc || ""),
+              eventId: Number.isFinite(Number(row.event_id)) ? Number(row.event_id) : null,
+            };
+          })
+          .filter((item) => Boolean(item.url));
+        const pagination = json.pagination || {};
+        savedPagination = {
+          limit: Number(pagination.limit ?? PAGE_SIZE),
+          offset: Number(pagination.offset ?? savedPagination.offset ?? 0),
+          total: Number(pagination.total ?? savedItems.length),
+          page: Number(pagination.page ?? 1),
+          pages: Number(pagination.pages ?? 1),
+          has_prev: Boolean(pagination.has_prev),
+          has_next: Boolean(pagination.has_next),
+        };
+        updateSavedPagingUi();
+        updateSavedVideoNavButtons();
+        renderSavedGrid();
+      }
+
+      async function deleteSelectedSavedItem(options = {}) {
+        const selected = selectedSavedItem();
+        if (!selected) {
+          return;
+        }
+        if (!window.confirm("Delete this saved item and its media files?")) {
+          return;
+        }
+        const result = await fetch(`/api/saved/${encodeURIComponent(selected.id)}?delete_files=true`, {
+          method: "DELETE",
+        });
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `saved delete failed (${result.status})`);
+        }
+        closeSavedVideoModal();
+        if (options.closeModal !== false) {
+          closeSavedModal();
+        }
+        await loadSavedItems({ resetOffset: false });
+        await loadEvents({ resetOffset: false }).catch(console.error);
+        await loadRecordings({ resetOffset: false }).catch(console.error);
+      }
+
+      function wireEventsAndRecordingsFilters() {
+        document.getElementById("events-filter-apply").addEventListener("click", () => {
+          pullEventsFiltersFromUi();
+          loadEvents({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("events-filter-clear").addEventListener("click", () => {
+          resetEventsFiltersUi();
+          pullEventsFiltersFromUi();
+          loadEvents({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("events-page-prev").addEventListener("click", () => {
+          if (!eventsPagination.has_prev) {
+            return;
+          }
+          eventsPagination.offset = Math.max(0, Number(eventsPagination.offset) - PAGE_SIZE);
+          loadEvents().catch(console.error);
+        });
+        document.getElementById("events-page-next").addEventListener("click", () => {
+          if (!eventsPagination.has_next) {
+            return;
+          }
+          eventsPagination.offset = Number(eventsPagination.offset) + PAGE_SIZE;
+          loadEvents().catch(console.error);
+        });
+        document.getElementById("events-filter-q").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            pullEventsFiltersFromUi();
+            loadEvents({ resetOffset: true }).catch(console.error);
+          }
+        });
+
+        document.getElementById("recordings-filter-apply").addEventListener("click", () => {
+          pullRecordingsFiltersFromUi();
+          loadRecordings({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("recordings-filter-clear").addEventListener("click", () => {
+          resetRecordingsFiltersUi();
+          pullRecordingsFiltersFromUi();
+          loadRecordings({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("recordings-page-prev").addEventListener("click", () => {
+          if (!recordingsPagination.has_prev) {
+            return;
+          }
+          recordingsPagination.offset = Math.max(0, Number(recordingsPagination.offset) - PAGE_SIZE);
+          loadRecordings().catch(console.error);
+        });
+        document.getElementById("recordings-page-next").addEventListener("click", () => {
+          if (!recordingsPagination.has_next) {
+            return;
+          }
+          recordingsPagination.offset = Number(recordingsPagination.offset) + PAGE_SIZE;
+          loadRecordings().catch(console.error);
+        });
+        document.getElementById("recordings-filter-q").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            pullRecordingsFiltersFromUi();
+            loadRecordings({ resetOffset: true }).catch(console.error);
+          }
+        });
+
+        document.getElementById("recording-prev").addEventListener("click", () => {
+          selectAdjacentRecording(-1);
+        });
+        document.getElementById("recording-next").addEventListener("click", () => {
+          selectAdjacentRecording(1);
+        });
+        document.getElementById("recording-save").addEventListener("click", () => {
+          saveSelectedRecordingItem().catch(console.error);
+        });
+
+        document.getElementById("saved-filter-apply").addEventListener("click", () => {
+          pullSavedFiltersFromUi();
+          loadSavedItems({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("saved-filter-clear").addEventListener("click", () => {
+          resetSavedFiltersUi();
+          pullSavedFiltersFromUi();
+          loadSavedItems({ resetOffset: true }).catch(console.error);
+        });
+        document.getElementById("saved-page-prev").addEventListener("click", () => {
+          if (!savedPagination.has_prev) {
+            return;
+          }
+          savedPagination.offset = Math.max(0, Number(savedPagination.offset) - PAGE_SIZE);
+          loadSavedItems().catch(console.error);
+        });
+        document.getElementById("saved-page-next").addEventListener("click", () => {
+          if (!savedPagination.has_next) {
+            return;
+          }
+          savedPagination.offset = Number(savedPagination.offset) + PAGE_SIZE;
+          loadSavedItems().catch(console.error);
+        });
+        document.getElementById("saved-filter-q").addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            pullSavedFiltersFromUi();
+            loadSavedItems({ resetOffset: true }).catch(console.error);
+          }
+        });
       }
 
       function getLogPane(key) {
@@ -1434,13 +4366,41 @@
         return logFiles[currentLogIndex] || "";
       }
 
-      function hasErrorInLog(content) {
-        return LOG_ERROR_PATTERN.test(String(content || ""));
+      function logLevelPattern(level) {
+        const normalized = String(level || "all").trim().toLowerCase();
+        if (normalized === "error") {
+          return /\b(error|exception|traceback|fatal|failed|critical|-138)\b/i;
+        }
+        if (normalized === "warn") {
+          return /\b(warn|warning|retry|timeout|disconnect|unavailable|reconnect)\b/i;
+        }
+        if (normalized === "info") {
+          return /\b(info|started|listening|healthy|ok|loaded|ready)\b/i;
+        }
+        return null;
       }
 
-      function updateLogsTabAlertState() {
-        const hasAnyError = Array.from(logErrorsByFile.values()).some(Boolean);
-        logsTabBtn?.classList.toggle("alert", hasAnyError);
+      function filteredLogContent(content) {
+        const raw = String(content || "");
+        const textFilter = String(document.getElementById("log-filter-text")?.value || "")
+          .trim()
+          .toLowerCase();
+        const levelFilter = String(document.getElementById("log-filter-level")?.value || "all");
+        const levelPattern = logLevelPattern(levelFilter);
+        if (!textFilter && !levelPattern) {
+          return raw || "(empty log)";
+        }
+        const lines = raw.split(/\r?\n/);
+        const kept = lines.filter((line) => {
+          if (levelPattern && !levelPattern.test(line)) {
+            return false;
+          }
+          if (textFilter && !line.toLowerCase().includes(textFilter)) {
+            return false;
+          }
+          return true;
+        });
+        return kept.length ? kept.join("\n") : "No lines match current filter.";
       }
 
       function updateLogHeader() {
@@ -1451,7 +4411,6 @@
 
         if (!logFiles.length) {
           sourceName.textContent = "No logs available";
-          sourceName.classList.remove("error");
           sourceSub.textContent = "0 / 0";
           prevBtn.disabled = true;
           nextBtn.disabled = true;
@@ -1459,13 +4418,24 @@
         }
 
         const name = currentLogName();
-        const hasError = Boolean(logErrorsByFile.get(name));
         sourceName.textContent = name;
-        sourceName.classList.toggle("error", hasError);
-        sourceSub.textContent = `${currentLogIndex + 1} / ${logFiles.length}${hasError ? " | errors detected" : ""}`;
+        const totalLines = String(currentRawLogContent || "")
+          .split(/\r?\n/)
+          .filter((line, idx, arr) => !(arr.length === 1 && idx === 0 && !line))
+          .length;
+        const textFilter = String(document.getElementById("log-filter-text")?.value || "").trim();
+        const levelFilter = String(document.getElementById("log-filter-level")?.value || "all");
+        const filterEnabled = Boolean(textFilter) || levelFilter !== "all";
+        sourceSub.textContent = `${currentLogIndex + 1} / ${logFiles.length} | ${totalLines} lines${filterEnabled ? " | filtered view" : ""}`;
         const disableArrows = logFiles.length <= 1;
         prevBtn.disabled = disableArrows;
         nextBtn.disabled = disableArrows;
+      }
+
+      function refreshVisibleLogFromFilters(options = {}) {
+        const viewText = filteredLogContent(currentRawLogContent);
+        renderLogContent(viewText, options);
+        updateLogHeader();
       }
 
       async function fetchLogContent(logName, lines) {
@@ -1479,6 +4449,7 @@
 
       async function showCurrentLog(options = {}) {
         if (!logFiles.length) {
+          currentRawLogContent = "";
           renderLogContent("No logs available.");
           updateLogHeader();
           return;
@@ -1486,7 +4457,7 @@
 
         const token = ++logRequestToken;
         const logName = currentLogName();
-        const lines = Math.max(20, Math.min(2000, Number(document.getElementById("log-lines").value || "250")));
+        const lines = Math.max(0, Math.min(20000, Number(document.getElementById("log-lines").value || "500")));
         updateLogHeader();
 
         try {
@@ -1494,40 +4465,16 @@
           if (token !== logRequestToken) {
             return;
           }
-          logErrorsByFile.set(logName, hasErrorInLog(content));
-          renderLogContent(content, options);
+          currentRawLogContent = content;
+          refreshVisibleLogFromFilters(options);
         } catch (error) {
           if (token !== logRequestToken) {
             return;
           }
-          logErrorsByFile.set(logName, true);
+          currentRawLogContent = "";
           renderLogContent(`Failed to load ${logName}.`, options);
-        }
-
-        updateLogHeader();
-        updateLogsTabAlertState();
-      }
-
-      async function refreshLogErrorSignals(sampleLines = 120) {
-        if (!logFiles.length) {
-          logErrorsByFile = new Map();
-          updateLogsTabAlertState();
           updateLogHeader();
-          return;
         }
-        const checks = await Promise.all(
-          logFiles.map(async (name) => {
-            try {
-              const content = await fetchLogContent(name, sampleLines);
-              return [name, hasErrorInLog(content)];
-            } catch (error) {
-              return [name, true];
-            }
-          })
-        );
-        logErrorsByFile = new Map(checks);
-        updateLogHeader();
-        updateLogsTabAlertState();
       }
 
       async function refreshLogsPanel(options = {}) {
@@ -1541,11 +4488,10 @@
         logFiles = Array.isArray(json.logs) ? json.logs : [];
 
         if (!logFiles.length) {
-          logErrorsByFile = new Map();
           currentLogIndex = 0;
+          currentRawLogContent = "";
           renderLogContent("No logs available.");
           updateLogHeader();
-          updateLogsTabAlertState();
           return;
         }
 
@@ -1556,8 +4502,6 @@
         }
 
         await showCurrentLog({ animate, direction });
-        const sampleLines = Math.max(40, Math.min(240, Number(document.getElementById("log-lines").value || "250")));
-        await refreshLogErrorSignals(sampleLines);
       }
 
       function stepLog(direction) {
@@ -1574,9 +4518,19 @@
         document.getElementById("log-refresh").addEventListener("click", () => {
           refreshLogsPanel({ preserveCurrent: true, animate: false }).catch(console.error);
         });
+        document.getElementById("log-filter-level").addEventListener("change", () => {
+          refreshVisibleLogFromFilters();
+        });
+        document.getElementById("log-filter-text").addEventListener("input", () => {
+          refreshVisibleLogFromFilters();
+        });
+        document.getElementById("log-filter-clear").addEventListener("click", () => {
+          document.getElementById("log-filter-level").value = "all";
+          document.getElementById("log-filter-text").value = "";
+          refreshVisibleLogFromFilters();
+        });
         document.getElementById("log-lines").addEventListener("change", () => {
           showCurrentLog({ animate: false }).catch(console.error);
-          refreshLogErrorSignals().catch(console.error);
         });
       }
 
@@ -1726,8 +4680,12 @@
       function wireEventModal() {
         const modal = document.getElementById("event-modal");
         const closeBtn = document.getElementById("event-modal-close");
+        const saveBtn = document.getElementById("event-modal-save");
 
         closeBtn.addEventListener("click", closeEventModal);
+        saveBtn.addEventListener("click", () => {
+          saveEventFromModal().catch(console.error);
+        });
         modal.addEventListener("click", (event) => {
           if (event.target === modal) {
             closeEventModal();
@@ -1740,18 +4698,218 @@
         });
       }
 
-      async function loadLatestSnapshot() {
-        const result = await fetch("/api/latest-snapshot");
-        const json = await result.json();
-        const img = document.getElementById("snapshot");
-        const note = document.getElementById("snapshot-note");
-        if (!json.url) {
-          img.removeAttribute("src");
-          note.textContent = "Waiting for first detection event...";
-          return;
+      function wireSavedModals() {
+        const savedModal = document.getElementById("saved-modal");
+        const savedCloseBtn = document.getElementById("saved-modal-close");
+        const savedPlayBtn = document.getElementById("saved-modal-play");
+        const savedDeleteBtn = document.getElementById("saved-modal-delete");
+        const savedVideoModal = document.getElementById("saved-video-modal");
+        const savedVideoCloseBtn = document.getElementById("saved-video-close");
+        const savedVideoPrevBtn = document.getElementById("saved-video-prev");
+        const savedVideoNextBtn = document.getElementById("saved-video-next");
+
+        savedCloseBtn.addEventListener("click", closeSavedModal);
+        savedPlayBtn.addEventListener("click", () => {
+          openSavedVideoModal(selectedSavedForModal || selectedSavedItem(), { autoplay: true });
+        });
+        savedDeleteBtn.addEventListener("click", () => {
+          deleteSelectedSavedItem({ closeModal: true }).catch(console.error);
+        });
+        savedModal.addEventListener("click", (event) => {
+          if (event.target === savedModal) {
+            closeSavedModal();
+          }
+        });
+
+        savedVideoCloseBtn.addEventListener("click", closeSavedVideoModal);
+        savedVideoPrevBtn.addEventListener("click", () => {
+          selectSavedAdjacent(-1, { openVideo: true });
+        });
+        savedVideoNextBtn.addEventListener("click", () => {
+          selectSavedAdjacent(1, { openVideo: true });
+        });
+        savedVideoModal.addEventListener("click", (event) => {
+          if (event.target === savedVideoModal) {
+            closeSavedVideoModal();
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && savedVideoModal.classList.contains("open")) {
+            closeSavedVideoModal();
+            return;
+          }
+          if (event.key === "Escape" && savedModal.classList.contains("open")) {
+            closeSavedModal();
+            return;
+          }
+          if (!savedVideoModal.classList.contains("open")) {
+            return;
+          }
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            selectSavedAdjacent(-1, { openVideo: true });
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            selectSavedAdjacent(1, { openVideo: true });
+          }
+        });
+      }
+
+      function normalizeRestartScheduleTime(value) {
+        const text = String(value ?? "").trim();
+        const match = text.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+        if (!match) {
+          return "04:00";
         }
-        img.src = `${json.url}?t=${Date.now()}`;
-        note.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        return `${match[1]}:${match[2]}`;
+      }
+
+      function normalizeRestartScheduleWeekday(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          return 0;
+        }
+        return Math.max(0, Math.min(6, Math.trunc(parsed)));
+      }
+
+      function normalizeRestartSchedulePayload(rawSchedule) {
+        const schedule = rawSchedule && typeof rawSchedule === "object" ? rawSchedule : {};
+        const daily = schedule.daily && typeof schedule.daily === "object" ? schedule.daily : {};
+        const weekly = schedule.weekly && typeof schedule.weekly === "object" ? schedule.weekly : {};
+        return {
+          daily: {
+            enabled: Boolean(daily.enabled),
+            time_local: normalizeRestartScheduleTime(daily.time_local),
+          },
+          weekly: {
+            enabled: Boolean(weekly.enabled),
+            weekday: normalizeRestartScheduleWeekday(weekly.weekday),
+            time_local: normalizeRestartScheduleTime(weekly.time_local),
+          },
+        };
+      }
+
+      function readRestartScheduleUi() {
+        return normalizeRestartSchedulePayload({
+          daily: {
+            enabled: Boolean(document.getElementById("restart-daily-enabled").checked),
+            time_local: String(document.getElementById("restart-daily-time").value || "04:00"),
+          },
+          weekly: {
+            enabled: Boolean(document.getElementById("restart-weekly-enabled").checked),
+            weekday: Number(document.getElementById("restart-weekly-day").value || 0),
+            time_local: String(document.getElementById("restart-weekly-time").value || "04:00"),
+          },
+        });
+      }
+
+      function restartSchedulesEqual(a, b) {
+        const left = normalizeRestartSchedulePayload(a || {});
+        const right = normalizeRestartSchedulePayload(b || {});
+        return (
+          left.daily.enabled === right.daily.enabled &&
+          left.daily.time_local === right.daily.time_local &&
+          left.weekly.enabled === right.weekly.enabled &&
+          left.weekly.weekday === right.weekly.weekday &&
+          left.weekly.time_local === right.weekly.time_local
+        );
+      }
+
+      function markRestartScheduleDirty() {
+        restartScheduleDirty = !restartSchedulesEqual(readRestartScheduleUi(), restartScheduleServer);
+      }
+
+      function wireRestartScheduleDirtyTracking() {
+        const controls = [
+          document.getElementById("restart-daily-enabled"),
+          document.getElementById("restart-daily-time"),
+          document.getElementById("restart-weekly-enabled"),
+          document.getElementById("restart-weekly-day"),
+          document.getElementById("restart-weekly-time"),
+        ];
+        controls.forEach((node) => {
+          if (!node || node.dataset.restartDirtyBound === "1") {
+            return;
+          }
+          node.dataset.restartDirtyBound = "1";
+          node.addEventListener("change", markRestartScheduleDirty);
+          if (node.tagName === "INPUT") {
+            node.addEventListener("input", markRestartScheduleDirty);
+          }
+        });
+      }
+
+      function applyRestartScheduleUi(payload, options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const schedule = normalizeRestartSchedulePayload(payload?.schedule || {});
+        restartScheduleServer = schedule;
+        const shouldHydrateInputs = !keepEdits || !restartScheduleDirty;
+        if (shouldHydrateInputs) {
+          document.getElementById("restart-daily-enabled").checked = Boolean(schedule.daily.enabled);
+          document.getElementById("restart-daily-time").value = String(schedule.daily.time_local || "04:00");
+          document.getElementById("restart-weekly-enabled").checked = Boolean(schedule.weekly.enabled);
+          document.getElementById("restart-weekly-day").value = String(schedule.weekly.weekday ?? 0);
+          document.getElementById("restart-weekly-time").value = String(schedule.weekly.time_local || "04:00");
+          restartScheduleDirty = false;
+        }
+        const runner = payload?.runner || {};
+        const text = runner.running
+          ? `Runner active${runner.last_tick_local ? ` | tick ${runner.last_tick_local}` : ""}`
+          : "Runner offline";
+        document.getElementById("system-restart-runner").textContent = text;
+      }
+
+      async function loadRestartSchedule(options = {}) {
+        const keepEdits = Boolean(options.keepEdits ?? true);
+        const result = await fetch("/api/server/restart-schedule");
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `restart schedule failed (${result.status})`);
+        }
+        applyRestartScheduleUi(json, { keepEdits });
+      }
+
+      async function saveRestartSchedule() {
+        const payload = { schedule: readRestartScheduleUi() };
+        const result = await fetch("/api/server/restart-schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse(result);
+        if (!result.ok) {
+          throw new Error(json?.detail || `restart schedule save failed (${result.status})`);
+        }
+        applyRestartScheduleUi(json, { keepEdits: false });
+      }
+
+      function wireSystemControls() {
+        wireRestartScheduleDirtyTracking();
+        const shutdownBtn = document.getElementById("system-shutdown-btn");
+        const rebootBtn = document.getElementById("system-reboot-btn");
+        const scheduleSaveBtn = document.getElementById("restart-schedule-save");
+        const scheduleRefreshBtn = document.getElementById("restart-schedule-refresh");
+        if (shutdownBtn) {
+          shutdownBtn.addEventListener("click", () => {
+            scheduleSystemServerAction("shutdown").catch(console.error);
+          });
+        }
+        if (rebootBtn) {
+          rebootBtn.addEventListener("click", () => {
+            scheduleSystemServerAction("reboot").catch(console.error);
+          });
+        }
+        if (scheduleSaveBtn) {
+          scheduleSaveBtn.addEventListener("click", () => {
+            saveRestartSchedule().catch(console.error);
+          });
+        }
+        if (scheduleRefreshBtn) {
+          scheduleRefreshBtn.addEventListener("click", () => {
+            loadRestartSchedule({ keepEdits: false }).catch(console.error);
+          });
+        }
       }
 
       async function refresh() {
@@ -1762,9 +4920,23 @@
             loadEvents(),
             loadRecordings(),
             refreshLogsPanel({ preserveCurrent: true, animate: false }),
-            loadLatestSnapshot(),
           ];
           await Promise.all(tasks);
+          const cameraTabVisible = !document.getElementById("camera-tab").classList.contains("hidden");
+          if (cameraTabVisible) {
+            await refreshCameraControlStatus({ quiet: true });
+            await refreshCameraAutomationStatus({ quiet: true });
+            await refreshCameraModeState({ quiet: true, keepEdits: true });
+          }
+          const savedTabVisible = !document.getElementById("saved-tab").classList.contains("hidden");
+          if (savedTabVisible) {
+            await loadSavedItems();
+          }
+          const systemTabVisible = !document.getElementById("system-tab").classList.contains("hidden");
+          if (systemTabVisible) {
+            await loadSystemUtilization();
+            await loadRestartSchedule({ keepEdits: true });
+          }
         } catch (error) {
           setTelemetryValue("telemetry-backend", "Unavailable", "warn");
           console.error(error);
@@ -1772,13 +4944,32 @@
       }
 
       document.getElementById("live-refresh").addEventListener("click", startLiveFeed);
+      document.getElementById("live-clip-15").addEventListener("click", () => {
+        createManualClip(15).catch(console.error);
+      });
+      document.getElementById("live-clip-30").addEventListener("click", () => {
+        createManualClip(30).catch(console.error);
+      });
 
       wireLogCarousel();
+      wireCameraControlPanel();
+      wireEventsAndRecordingsFilters();
       wireEventModal();
+      wireSavedModals();
+      wireSystemControls();
       wireLiveFullscreen();
       wireLiveFrameStatus();
+      pullEventsFiltersFromUi();
+      pullRecordingsFiltersFromUi();
+      pullSavedFiltersFromUi();
       refresh();
       startLiveFeed();
+      loadServerControlState({ quiet: true });
+      setInterval(() => {
+        loadServerControlState({ quiet: true }).catch(() => {});
+      }, 1000);
+      sendViewerHeartbeat();
+      setInterval(sendViewerHeartbeat, 10000);
       setInterval(refresh, DASHBOARD_REFRESH_INTERVAL_MS);
     </script>
   </body>
